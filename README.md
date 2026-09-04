@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Fantasy Football Money Game — 2026/27
 
-## Getting Started
+Four friends, sixteen clubs, nine competitions. When two owned clubs meet, money moves. Append-only ledger, zero-sum by construction.
 
-First, run the development server:
+## Quick start
 
 ```bash
+npm install
+npm test                    # scoring engine: 22 spec cases + seed assertions (must be green)
+npx tsx scripts/boot-check.ts   # 69 logged · 63 paying · 10/9/7/4 (boot refuses otherwise)
+psql $DATABASE_URL -f supabase/migrations/0001_schema.sql
+psql $DATABASE_URL -f supabase/migrations/0002_seed.sql
+psql $DATABASE_URL -f supabase/migrations/0003_rls.sql
+cp .env.example .env        # fill in provider + Supabase keys
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Build order (per spec §15)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. ✅ Schema + seed + boot assertions (`supabase/migrations/`, `src/lib/seed/`)
+2. ✅ Pure scoring engine + 22 tests (`src/lib/scoring/` — the ONLY place money is computed)
+3. ✅ Provider adapters + verification script (`src/lib/providers/`, `scripts/verify-score-semantics.ts`)
+4. ✅ Team-ID mapping script (`scripts/map-team-ids.ts`, IDs in `src/lib/providers/team-ids.ts`)
+5. ✅ Manual entry path (Commissioner console one-line format → proposal preview)
+6. ✅ Read-only web app (all §11 routes)
+7. ✅ Telegram notifications (`TelegramAdapter` active; WhatsApp behind `WHATSAPP_ENABLED`)
+8. ✅ Poller + approval queue (`/api/cron/poll`, `/api/approvals/[id]`, WhatsApp/Telegram webhooks)
+9. ✅ Backfill (`/api/backfill`, bulk approve)
+10. ✅ WhatsApp adapter (needs Meta verification + template approval — see below)
+11. ✅ Awards, settlement, weekly report
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Invariants (§1)
 
-## Learn More
+- **Zero-sum**: every movement is a `from → to` row; trophy = 3 rows. Asserted after every write.
+- **Append-only**: `ledger_append_only` trigger rejects UPDATE/DELETE. Corrections = reversal + new row.
+- **Never guess / never auto-approve**: ambiguity → manual review; proposals escalate forever.
+- **Idempotency**: unique partial indexes on fixture/tie/(trophy,from).
+- **Integer rupees**: `CHECK (amount_inr % 500 = 0)`, no floats anywhere in the money path.
 
-To learn more about Next.js, take a look at the following resources:
+## Providers (§5)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Provider | Covers | Quota | Role |
+|---|---|---|---|
+| football-data.org | EPL/La Liga/Bundesliga/Serie A/UCL | 10 req/min | Primary for the five |
+| API-Football | all incl. 4 domestic cups | 100 req/day | Only source for cups |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Web app never calls APIs on page load — Postgres only. `api_call_log` enforces the quota; under 15 remaining, non-urgent work defers and the Commissioner is alerted.
 
-## Deploy on Vercel
+Before trusting score fields: `FOOTBALL_DATA_ORG_TOKEN=... API_FOOTBALL_KEY=... npx tsx scripts/verify-score-semantics.ts` and commit the output.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Amendment I (§2)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Ships **pending** in `/constitution` and the Commissioner console. The poller refuses to run until Archit ratifies it (`poller_enabled` in `config`).
+
+## WhatsApp setup (§7.2, human steps)
+
+Meta Business account → verification → WhatsApp Business Account → dedicated phone number (not on consumer WhatsApp) → permanent System User token → public HTTPS webhook. Submit the six `UTILITY` templates (`result_approval_request`, `result_recorded`, `tie_resolved`, `trophy_recorded`, `manual_review_needed`, `weekly_summary`). Cost: per-message since 1 Jul 2025; utility templates at Indian rates are fractions of a cent — a season at ~20 msgs/week is single-digit dollars. Every send is logged in `notifications` with provider ID + delivery status.
+
+## Non-goals (§16)
+
+No live minute-by-minute scores, no xG/odds, no payments/UPI, no native app, no public signup, no AI anywhere near the scoring engine.

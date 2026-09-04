@@ -1,26 +1,55 @@
 @import "tailwindcss";
 
+/* Editorial broadsheet: serif headings, tabular rupee figures.
+   Green for credit, red for debit, nothing else coloured. */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --ink: #14202b;
+  --muted: #5b6b7a;
+  --line: #dfe7ee;
+  --paper: #ffffff;
+  --green: #0f7a4d;
+  --red: #b3372f;
+  --gold: #b98a1e;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  margin: 0;
 }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+.masthead { border-bottom: 3px double var(--ink); padding: 28px 0 12px; }
+.kicker { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.masthead h1 { font-size: 44px; margin: 0 0 12px; letter-spacing: -0.01em; }
+.masthead nav { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-bottom: 8px; }
+.masthead nav a { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; color: var(--ink); text-decoration: none; border-bottom: 1px solid transparent; }
+.masthead nav a:hover { border-bottom-color: var(--gold); }
+
+.foot { border-top: 1px solid var(--line); margin-top: 48px; padding: 16px 24px 40px; color: var(--muted); font-size: 13px; }
+
+h2 { font-size: 30px; margin: 32px 0 8px; }
+h3 { font-size: 20px; margin: 24px 0 8px; }
+p, li { font-size: 16px; line-height: 1.55; }
+.sans { font-family: ui-sans-serif, system-ui, sans-serif; }
+
+table.record { width: 100%; border-collapse: collapse; margin: 16px 0; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 14px; }
+table.record th { text-align: left; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #fff; background: var(--ink); padding: 10px 12px; }
+table.record td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+table.record tr:nth-child(even) td { background: #f4f8fb; }
+
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+.credit { color: var(--green); font-weight: 700; }
+.debit { color: var(--red); font-weight: 700; }
+
+.zero-ok { display: inline-block; font-family: ui-sans-serif, system-ui, sans-serif; background: var(--ink); color: #fff; padding: 8px 16px; font-size: 18px; }
+.zero-bad { display: inline-block; font-family: ui-sans-serif, system-ui, sans-serif; background: var(--red); color: #fff; padding: 8px 16px; font-size: 18px; }
+
+.card { border: 1px solid var(--line); padding: 16px 20px; margin: 12px 0; }
+.card h4 { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin: 0 0 8px; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } .masthead h1 { font-size: 32px; } }
