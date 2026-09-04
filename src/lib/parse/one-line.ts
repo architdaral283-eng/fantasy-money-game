@@ -54,6 +54,12 @@ const UNOWNED_CLUBS = new Set([
   'lazio', 'atalanta', 'fiorentina', 'milan', 'ac milan', 'frankfurt',
 ]);
 
+/** Resolve a club by name or alias. Null when unknown. */
+export function resolveClub(raw: string): string | null {
+  const t = raw.trim().toLowerCase();
+  return CLUB_ALIASES[t] ?? clubByName.get(t)?.id ?? null;
+}
+
 export function parseOneLine(input: string): ParsedResult | { error: string } {
   // "Arsenal 2-0 Manchester City - Premier League" (hyphen, en dash and em dash all accepted)
   const m = input.trim().match(/^(.+?)\s+(\d+)\s*[-\u2013\u2014]\s*(\d+)\s+(.+?)\s*-\s*(.+)$/);

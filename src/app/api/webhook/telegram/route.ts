@@ -173,12 +173,25 @@ export async function POST(req: Request) {
       }
       // approve
       try {
+        const { data: before } = await db.from('player_balances').select('id,net_inr');
+        const topBefore = ((before ?? []) as { id: string; net_inr: number }[]).sort((a, b) => Number(b.net_inr) - Number(a.net_inr))[0]?.id;
         const r = await approveProposal(db, arg, 'archit');
         void r;
         const { data: approval } = await db.from('pending_approvals').select('proposed_payload').eq('id', arg).single();
-        const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string };
-        if (architChat && dmMid) await editText(architChat, dmMid, `APPROVED ${stamp} IST\n${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}`);
-        await sendGroup(db, `Recorded. ${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}.`);
+        const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string; margin?: number; amount?: number; terminalStatus?: string };
+        const fixture = `${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}`;
+        if (architChat && dmMid) await editText(architChat, dmMid, `APPROVED ${stamp} IST\n${fixture}`);
+        // shape carries the drama: thrashing, shootout, lead change
+        let groupLine = `Recorded. ${fixture}.`;
+        if ((pp.margin ?? 0) >= 4) groupLine = `Thrashing. ${fixture}. ₹${pp.amount}, doubled.`;
+        if (pp.terminalStatus === 'PEN') groupLine += ` Won on penalties. Counts as a win, not a draw.`;
+        const { data: after } = await db.from('player_balances').select('id,name,net_inr');
+        const topAfter = ((after ?? []) as { id: string; net_inr: number }[]).sort((a, b) => Number(b.net_inr) - Number(a.net_inr))[0]?.id;
+        if (topAfter && topBefore && topAfter !== topBefore) {
+          const nm = ((after ?? []) as { id: string; name?: string }[]).find((x) => x.id === topAfter);
+          groupLine += ` Lead change. ${(nm as { name?: string } | undefined)?.name ?? topAfter} takes the table.`;
+        }
+        await sendGroup(db, groupLine);
         await refreshPin(db);
         if (await clearLedgerLock(db)) await refreshPin(db);
         try {
@@ -235,7 +248,7 @@ export async function POST(req: Request) {
   const cmdline = text.split(' ')[0].replace(/@\w+$/, '');
   const rest = text.slice(cmdline.length).trim();
 
-  const HELP_ALL = `Commands: /standings /me /balance [player] /next [club] /last [n] /trophies /report <line> /rules /help`;
+  const HELP_ALL = `Commands: /standings /me /balance /next /last /trophies /stakes /swing /ifwins /bestcase /worstcase /scenarios /pool /streak /wooden /rewind /taunt /weekly /report /rules /help`;
   const HELP_COMM = `Commissioner: /pending /health /pin`;
 
   if (cmdline === '/start') {
@@ -361,6 +374,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
+  // ——— stakes, projections, social (pure arithmetic over the ledger) ———
+  if (['/stakes', '/exposure', '/swing', '/ifwins', '/bestcase', '/worstcase', '/scenarios', '/pool', '/streak', '/wooden', '/rewind', '/taunt', '/weekly'].includes(cmdline)) {
+    await statsReply(db, reply, cmdline, rest, me.id);
+    return NextResponse.json({ ok: true });
+  }
+
   // fallback: one-line score?
   const parsed = parseOneLine(text);
   if ('error' in parsed) {
@@ -378,4 +397,123 @@ export async function POST(req: Request) {
 
 function stripHtml(s: string): string {
   return s.replace(/<[^>]*>/g, '');
+}
+
+async function statsReply(
+  db: ReturnType<typeof supabaseService>,
+  reply: (t: string) => Promise<unknown>,
+  cmd: string,
+  rest: string,
+  callerId: string,
+) {
+  const { stakesFor, biggestSwing, ceilingFloor, formString, activeLosingStreak, pickTaunt, inr } = await import('@/lib/stats/projections');
+  const { resolveClub } = await import('@/lib/parse/one-line');
+  const [{ data: bal }, { data: wld }, { data: fx }, { data: tr }, { data: ledger }, { data: clubs }, { data: comps }] = await Promise.all([
+    db.from('player_balances').select('id,name,net_inr'),
+    db.from('wld_records').select('player_id,outcome,occurred_at'),
+    db.from('fixtures').select('id,competition_id,home_club_id,away_club_id,kickoff_utc,status,is_same_owner'),
+    db.from('trophies').select('competition_id,status'),
+    db.from('ledger_entries').select('from_player_id,to_player_id,amount_inr,created_at,description'),
+    db.from('clubs').select('id,name,league,owner_id,in_ucl'),
+    db.from('competitions').select('id,name,code,trophy_winner_prize,trophy_each_other_pays'),
+  ]);
+  const bals = new Map(((bal ?? []) as { id: string; name: string; net_inr: number }[]).map((b) => [b.id, { name: b.name, net: Number(b.net_inr) }]));
+  const evts = ((wld ?? []) as { player_id: string; outcome: 'W' | 'L' | 'D'; occurred_at: string }[]).map((w) => ({ player: w.player_id, outcome: w.outcome, at: w.occurred_at }));
+  const remaining = ((fx ?? []) as { status: string; is_same_owner: boolean; kickoff_utc: string | null }[]).filter((f) => f.status === 'SCHEDULED' && !f.is_same_owner);
+  const live = ((tr ?? []) as { competition_id: string; status: string }[]).filter((t) => t.status === 'Live');
+  const cmap = new Map(((comps ?? []) as { id: string; name: string; code: string; trophy_winner_prize: number; trophy_each_other_pays: number }[]).map((c) => [c.id, c]));
+  const liveT = live.map((t) => {
+    const c = cmap.get(t.competition_id);
+    return { code: c?.code ?? t.competition_id, name: c?.name ?? t.competition_id, winnerPrize: c?.trophy_winner_prize ?? 0, eachOtherPays: c?.trophy_each_other_pays ?? 0 };
+  });
+  const nameOf = (id: string) => bals.get(id)?.name ?? id;
+  const week = remaining.filter((f) => f.kickoff_utc && Date.parse(f.kickoff_utc) < Date.now() + 7 * 864e5);
+
+  if (cmd === '/stakes') {
+    const s = stakesFor(week.length);
+    await reply(week.length ? `${week.length} counted fixtures in the next 7 days.\n₹${s.base.toLocaleString('en-IN')} in play. ₹${s.ifBig.toLocaleString('en-IN')} if all go big.` : 'Nothing counted in the next 7 days.');
+    return;
+  }
+  if (cmd === '/exposure' || cmd === '/bestcase' || cmd === '/worstcase') {
+    const who = rest.toLowerCase() || callerId;
+    const pid = ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || nameOf(p).toLowerCase() === who) ?? callerId;
+    const mine = ((clubs ?? []) as { owner_id: string; in_ucl: boolean }[]).filter((c) => c.owner_id === pid);
+    const hasUcl = mine.some((c) => c.in_ucl);
+    const win = liveT.filter((t) => t.code !== 'UCL' || hasUcl).map((t) => t.winnerPrize);
+    const lose = liveT.map((t) => t.eachOtherPays);
+    const { best, worst } = ceilingFloor(bals.get(pid)?.net ?? 0, remaining.length, win, lose);
+    await reply(cmd === '/exposure'
+      ? `${nameOf(pid)}: ceiling ${inr(best)}, floor ${inr(worst)}, across ${remaining.length} fixtures and ${liveT.length} live trophies. Arithmetic, not prediction.`
+      : cmd === '/bestcase' ? `${nameOf(pid)} best case: ${inr(best)}. Every fixture a thrashing, every reachable trophy taken.` : `${nameOf(pid)} worst case: ${inr(worst)}. Every fixture lost big, every trophy to someone else.`);
+    return;
+  }
+  if (cmd === '/swing') {
+    const s = biggestSwing(liveT);
+    await reply(`Biggest swing left: ${s.label}, ₹${s.swing.toLocaleString('en-IN')}.`);
+    return;
+  }
+  if (cmd === '/ifwins') {
+    const cid = resolveClub(rest);
+    if (!cid) { await reply('Name a club. Yours, ideally.'); return; }
+    const club = ((clubs ?? []) as { id: string; name: string; league: string; owner_id: string; in_ucl: boolean }[]).find((c) => c.id === cid);
+    if (!club) { await reply('No such club.'); return; }
+    const leagueComp = ((comps ?? []) as { name: string; trophy_winner_prize: number; trophy_each_other_pays: number }[]).find((c) => c.name === club.league);
+    if (!leagueComp) { await reply('No such competition.'); return; }
+    const lines = ['archit', 'vedant', 'harshal', 'anmol'].map((p) => {
+      const v = (bals.get(p)?.net ?? 0) + (p === club.owner_id ? leagueComp.trophy_winner_prize : -leagueComp.trophy_each_other_pays);
+      return `${nameOf(p)}: ${inr(v)}`;
+    });
+    await reply(`If ${club.name} take the ${club.league}:\n${lines.join('\n')}`);
+    return;
+  }
+  if (cmd === '/scenarios') {
+    const byLeague = new Map<string, string[]>();
+    for (const c of (clubs ?? []) as { name: string; league: string; owner_id: string }[]) {
+      const list = byLeague.get(c.league) ?? [];
+      list.push(`${c.name} (${nameOf(c.owner_id)})`);
+      byLeague.set(c.league, list);
+    }
+    await reply(`Title races. Who benefits:\n\n${[...byLeague.entries()].map(([l, cs]) => `${l}: ${cs.join(', ')}`).join('\n')}`);
+    return;
+  }
+  if (cmd === '/pool') {
+    const decided = 24000 - liveT.reduce((s, t) => s + t.winnerPrize, 0);
+    await reply(`Pool ₹24,000. Live: ${liveT.length} trophies (₹${liveT.reduce((s, t) => s + t.winnerPrize, 0).toLocaleString('en-IN')}). Decided or gone: ₹${decided.toLocaleString('en-IN')}.`);
+    return;
+  }
+  if (cmd === '/streak' || cmd === '/wooden') {
+    if (cmd === '/streak') {
+      await reply(['archit', 'vedant', 'harshal', 'anmol'].map((p) => `${nameOf(p)}: ${formString(evts, p)}`).join('\n'));
+    } else {
+      const order = ['archit', 'vedant', 'harshal', 'anmol'].sort((a, b) => (bals.get(a)?.net ?? 0) - (bals.get(b)?.net ?? 0));
+      const last = order[order.length - 1];
+      const gap = (bals.get(order[order.length - 2])?.net ?? 0) - (bals.get(last)?.net ?? 0);
+      await reply(`Spoon: ${nameOf(last)} at ${inr(bals.get(last)?.net ?? 0)}, ₹${gap.toLocaleString('en-IN')} behind.`);
+    }
+    return;
+  }
+  if (cmd === '/rewind' || cmd === '/weekly') {
+    const since = Date.now() - 7 * 864e5;
+    const rows = ((ledger ?? []) as { description: string; from_player_id: string; to_player_id: string; amount_inr: number; created_at: string }[]).filter((r) => Date.parse(r.created_at) >= since);
+    const head = cmd === '/weekly' ? `Week in review. ${rows.length} entries.\n\n` : '';
+    await reply(head + (rows.map((r) => `${r.description}: ₹${r.amount_inr} ${r.from_player_id} to ${r.to_player_id}`).join('\n') || 'Quiet week. Nothing written.'));
+    return;
+  }
+  if (cmd === '/taunt') {
+    const who = rest.toLowerCase() || callerId;
+    const pid = ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || nameOf(p).toLowerCase() === who) ?? callerId;
+    const debits = ((ledger ?? []) as { from_player_id: string; amount_inr: number; created_at: string }[]).filter((r) => r.from_player_id === pid);
+    const gross = debits.reduce((s, r) => s + r.amount_inr, 0);
+    const biggest = debits.reduce((m, r) => Math.max(m, r.amount_inr), 0);
+    const cutoff = Date.now() - 7 * 864e5;
+    const l7 = evts.filter((e) => e.player === pid && Date.parse(e.at) >= cutoff);
+    const facts = {
+      grossLost: gross,
+      streak: activeLosingStreak(evts, pid),
+      biggestSingleLoss: biggest,
+      last7: { w: l7.filter((e) => e.outcome === 'W').length, l: l7.filter((e) => e.outcome === 'L').length },
+    };
+    await reply(pickTaunt(nameOf(pid), facts, ' this season'));
+    return;
+  }
 }
