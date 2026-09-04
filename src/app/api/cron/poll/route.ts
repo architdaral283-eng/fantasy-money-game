@@ -45,7 +45,7 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number }[] };
+  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
 
   // schedule sync runs when fixtures lack dates or the last sync is >24h old (quota care)
   const { data: lastSync } = await db.from('config').select('value').eq('key', 'last_schedule_sync').single();
