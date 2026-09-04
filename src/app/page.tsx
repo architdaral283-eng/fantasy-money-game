@@ -4,12 +4,13 @@ import { useLiveData, balancesOf } from '@/lib/pages/live';
 
 /** `/` — standings, zero-sum badge, last results, progress, pool. */
 export default function Home() {
-  const { ledger, fixtures, loading } = useLiveData();
+  const { ledger, fixtures, wld, loading } = useLiveData();
   const bal = balancesOf(ledger);
   const sum = Object.values(bal).reduce((s, v) => s + v, 0);
   const zeroOk = sum === 0;
   const recorded = fixtures.filter((f) => f.status === 'RECORDED');
   const payingPlayed = recorded.filter((f) => !f.is_same_owner).length;
+  const count = (p: string, o: 'W' | 'L' | 'D') => wld.filter((r) => r.player_id === p && r.outcome === o).length;
 
   return (
     <>
@@ -30,7 +31,7 @@ export default function Home() {
         <tbody>
           {(['archit', 'vedant', 'harshal', 'anmol'] as const).map((p) => (
             <tr key={p}><td>{playerName(p)}</td><td className="num">{inr(bal[p] ?? 0)}</td>
-            <td className="num">0</td><td className="num">0</td><td className="num">0</td></tr>
+            <td className="num">{count(p, 'W')}</td><td className="num">{count(p, 'L')}</td><td className="num">{count(p, 'D')}</td></tr>
           ))}
         </tbody>
       </table>
