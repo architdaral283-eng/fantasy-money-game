@@ -245,12 +245,9 @@ export async function POST(req: Request) {
         const me2 = await playerByTg(db, update.message?.from?.id);
         if (!me2) return NextResponse.json({ ok: true });
         const reply2 = (t: string) => tgApi('sendMessage', { chat_id: chatId, text: t.slice(0, 4000), parse_mode: 'HTML' });
-        await answerTaunt(db, reply2, pid);
+        await answerTaunt(db, reply2, pid, String(chatId));
         return NextResponse.json({ ok: true });
       }
-    }
-    return NextResponse.json({ ok: true });
-  }
     }
     return NextResponse.json({ ok: true });
   }
@@ -411,7 +408,7 @@ export async function POST(req: Request) {
 
   // ——— stakes, projections, social (pure arithmetic over the ledger) ———
   if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct', '/roastadd', '/roastkill', '/roaststats'].includes(cmdline)) {
-    await statsReply(db, reply, cmdline, rest, me.id, me.role);
+    await statsReply(db, reply, cmdline, rest, me.id, me.role, String(chatId), isGroup);
     return NextResponse.json({ ok: true });
   }
 
@@ -586,11 +583,13 @@ async function answerTaunt(
 
 async function statsReply(
   db: ReturnType<typeof supabaseService>,
-  reply: (t: string, kb?: { text: string; callback_data: string }[][]) => Promise<unknown>,
+  reply: (t: string, kb?: { text: string; callback_data?: string; url?: string }[][]) => Promise<unknown>,
   cmd: string,
   rest: string,
   callerId: string,
   callerRole?: string,
+  chatId?: string,
+  isGroup?: boolean,
 ) {
   const { stakesFor, biggestSwing, ceilingFloor, formString, activeLosingStreak, pickTaunt, inr } = await import('@/lib/stats/projections');
   const { resolveClub } = await import('@/lib/parse/one-line');
