@@ -28,6 +28,17 @@ export function nextDigestAt(from: Date): Date {
   return new Date(release);
 }
 
+/** Effective quiet state: Commissioner override wins, else the clock. */
+export async function quietNow(db: SupabaseClient): Promise<boolean> {
+  try {
+    const { data } = await db.from('config').select('value').eq('key', 'quiet_override').single();
+    const mode = (data?.value as { mode?: string })?.mode;
+    if (mode === 'off') return false;
+    if (mode === 'on') return true;
+  } catch { /* fall through to clock */ }
+  return inQuietHoursAt(new Date());
+}
+
 export async function architAwake(db: SupabaseClient, windowMin = 15): Promise<boolean> {
   const { data } = await db.from('config').select('value').eq('key', 'last_inbound_archit').single();
   const at = (data?.value as { at?: string })?.at;
@@ -52,7 +63,7 @@ export async function sendGroup(db: SupabaseClient, text: string, opts: { urgent
   const gid = (g?.value as { id?: string })?.id;
   if (!gid) return;
   if (!opts.urgent) {
-    if (inQuietHoursAt(new Date())) {
+    if (await quietNow(db)) {
       await db.from('message_queue').insert({ dest: 'group', template_key: 'group', payload: { text }, not_before: nextDigestAt(new Date()).toISOString() });
       return;
     }

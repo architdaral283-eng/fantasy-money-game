@@ -217,7 +217,11 @@ export async function POST(req: Request) {
           const after = ['archit', 'vedant', 'harshal', 'anmol']
             .map((p) => `${p} ${net.get(p) ?? 0 >= 0 ? '+' : '−'}₹${Math.abs(net.get(p) ?? 0).toLocaleString('en-IN')}`).join(' ');
           const sent = await tg.send(archit.telegram_chat_id as string, 'result_approval_request', {
-            text: `${code}: ${scoreline}\n${what} · ${r.terminalStatus} · single source\nAfter: ${after}\nSingle source. Review on the site before approving.`,
+            text: `${code}: ${scoreline}\n${what} · ${r.terminalStatus} · single source\nAfter: ${after}\nSingle source. Tap only if sure.`,
+            buttons: [
+              { id: `approve:${approval.id}`, title: 'Approve' },
+              { id: `reject:${approval.id}`, title: 'Reject' },
+            ],
           });
           await db.from('pending_approvals').update({ provider_message_id: sent.messageId }).eq('id', approval.id);
         } catch (e) {

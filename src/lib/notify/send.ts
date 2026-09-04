@@ -23,8 +23,8 @@ async function log(db: SupabaseClient, playerId: string | null, channel: string,
 
 /** Text to all linked chats (Telegram now; WhatsApp/Discord later behind the flag). */
 export async function fanOutText(db: SupabaseClient, templateKey: string, text: string, buttons?: { id: string; title: string }[], opts: { urgent?: boolean } = {}): Promise<void> {
-  const { inQuietHoursAt, nextDigestAt } = await import('@/lib/notify/quiet');
-  const quiet = !opts.urgent && inQuietHoursAt(new Date());
+  const { quietNow, nextDigestAt } = await import('@/lib/notify/quiet');
+  const quiet = !opts.urgent && (await quietNow(db).catch(() => false));
   const tg = telegram();
   for (const p of await linkedPlayers(db)) {
     if (quiet) {

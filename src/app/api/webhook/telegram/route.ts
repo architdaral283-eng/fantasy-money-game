@@ -121,9 +121,28 @@ export async function POST(req: Request) {
   if (update.callback_query?.data) {
     const cq = update.callback_query;
     const finish = (text?: string, alert = false) => answerCallback(cq.id ?? '', text, alert);
-    const [kind, arg] = (cq.data as string).split(':');
+    const parts = (cq.data as string).split(':');
+    const kind = parts[0];
+    const arg = parts[1];
     const me = await playerByTg(db, cq.from?.id);
     if (me) await markInbound(db, me.id);
+
+    // correction confirm: correct:<fixtureId>:<homeGoals>:<awayGoals>, Archit only
+    if (kind === 'correct') {
+      if (!me || me.role !== 'COMMISSIONER') {
+        await finish('Only the Commissioner can confirm corrections.', true);
+        return NextResponse.json({ ok: true });
+      }
+      await finish('Applying correction.');
+      const apply = await fetch(`${APP_URL}/api/corrections`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fixtureId: parts[1], homeGoals: Number(parts[2]), awayGoals: Number(parts[3]), decidedBy: 'archit' }),
+      }).then((r) => r.json()).catch(() => ({ error: 'Correction service unreachable.' }));
+      const architChat2 = me.telegram_chat_id;
+      if (architChat2) await sendHtml(architChat2, apply.error ? `Correction failed. ${apply.error}` : `Done. ${apply.summary}`);
+      await refreshPin(db);
+      return NextResponse.json({ ok: true });
+    }
 
     // pin panel navigation (any linked player)
     if (kind === 'p') {
@@ -249,7 +268,7 @@ export async function POST(req: Request) {
   const cmdline = text.split(' ')[0].replace(/@\w+$/, '');
   const rest = text.slice(cmdline.length).trim();
 
-  const HELP_ALL = `Commands: /standings /me /balance /next /last /trophies /stakes /swing /ifwins /bestcase /worstcase /scenarios /pool /streak /wooden /rewind /taunt /weekly /report /rules /help`;
+  const HELP_ALL = `Commands: /standings /me /balance /next /last /trophies /stakes /swing /ifwins /bestcase /worstcase /scenarios /pool /streak /wooden /rewind /weekly /taunt /h2h /nemesis /club /ledger /awards /settle /correct /report /rules /help`;
   const HELP_COMM = `Commissioner: /pending /health /pin`;
 
   if (cmdline === '/start') {
@@ -368,8 +387,8 @@ export async function POST(req: Request) {
   }
 
   // ——— stakes, projections, social (pure arithmetic over the ledger) ———
-  if (['/stakes', '/exposure', '/swing', '/ifwins', '/bestcase', '/worstcase', '/scenarios', '/pool', '/streak', '/wooden', '/rewind', '/taunt', '/weekly'].includes(cmdline)) {
-    await statsReply(db, reply, cmdline, rest, me.id);
+  if (['/stakes', '/exposure', '/swing', '/ifwins', '/bestcase', '/worstcase', '/scenarios', '/pool', '/streak', '/wooden', '/rewind', '/taunt', '/weekly', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct'].includes(cmdline)) {
+    await statsReply(db, reply, cmdline, rest, me.id, me.role);
     return NextResponse.json({ ok: true });
   }
 
@@ -395,10 +414,11 @@ function stripHtml(s: string): string {
 
 async function statsReply(
   db: ReturnType<typeof supabaseService>,
-  reply: (t: string) => Promise<unknown>,
+  reply: (t: string, kb?: { text: string; callback_data: string }[][]) => Promise<unknown>,
   cmd: string,
   rest: string,
   callerId: string,
+  callerRole?: string,
 ) {
   const { stakesFor, biggestSwing, ceilingFloor, formString, activeLosingStreak, pickTaunt, inr } = await import('@/lib/stats/projections');
   const { resolveClub } = await import('@/lib/parse/one-line');
@@ -407,7 +427,7 @@ async function statsReply(
     db.from('wld_records').select('player_id,outcome,occurred_at'),
     db.from('fixtures').select('id,competition_id,home_club_id,away_club_id,kickoff_utc,status,is_same_owner'),
     db.from('trophies').select('competition_id,status'),
-    db.from('ledger_entries').select('from_player_id,to_player_id,amount_inr,created_at,description'),
+    db.from('ledger_entries').select('from_player_id,to_player_id,amount_inr,event_type,created_at,description'),
     db.from('clubs').select('id,name,league,owner_id,in_ucl'),
     db.from('competitions').select('id,name,code,trophy_winner_prize,trophy_each_other_pays'),
   ]);
@@ -508,6 +528,121 @@ async function statsReply(
       last7: { w: l7.filter((e) => e.outcome === 'W').length, l: l7.filter((e) => e.outcome === 'L').length },
     };
     await reply(pickTaunt(nameOf(pid), facts, ' this season'));
+    return;
+  }
+  if (cmd === '/h2h') {
+    const parts = rest.toLowerCase().split(/[\s,]+v[\s,]+|[\s,]+/).filter(Boolean);
+    const ids = parts.map((x) => ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === x || nameOf(p).toLowerCase() === x)).filter(Boolean) as string[];
+    if (ids.length < 2) { await reply('Name two players. /h2h archit vedant'); return; }
+    const [a, b] = ids;
+    const fxRows = ((await db.from('fixtures').select('id,home_club_id,away_club_id').eq('status', 'RECORDED').then((r) => r)) as { data: { id: string; home_club_id: string; away_club_id: string }[] | null });
+    const owners = new Map(((clubs ?? []) as { id: string; owner_id: string }[]).map((c) => [c.id, c.owner_id]));
+    const wldByFx = new Map<string, { player_id: string; outcome: string }[]>();
+    for (const w of (wld ? await db.from('wld_records').select('player_id,fixture_id,outcome').then((r) => (r.data ?? []) as { player_id: string; fixture_id: string; outcome: string }[]) : [])) {
+      const l = wldByFx.get(w.fixture_id) ?? [];
+      l.push(w);
+      wldByFx.set(w.fixture_id, l);
+    }
+    let aw = 0, bw = 0, dr = 0, netA = 0;
+    const led = ((ledger ?? []) as { fixture_id?: string | null; from_player_id: string; to_player_id: string; amount_inr: number }[]);
+    for (const f of fxRows.data ?? []) {
+      const ownersPair = new Set([owners.get(f.home_club_id), owners.get(f.away_club_id)]);
+      if (!(ownersPair.has(a) && ownersPair.has(b))) continue;
+      for (const w of wldByFx.get(f.id) ?? []) {
+        if (w.outcome === 'D') { dr++; continue; }
+        if (w.player_id === a) { if (w.outcome === 'W') aw++; else bw++; }
+        if (w.player_id === b) { if (w.outcome === 'W') bw++; else aw++; }
+      }
+      for (const e of led.filter((x) => x.fixture_id === f.id)) {
+        netA += (e.to_player_id === a ? e.amount_inr : 0) - (e.from_player_id === a ? e.amount_inr : 0);
+      }
+    }
+    const games = aw + bw + (dr ? 1 : 0);
+    await reply(`${nameOf(a)} v ${nameOf(b)}: ${games} played, ${aw}-${bw}-${dr} (W-L-D for ${nameOf(a)}), net ${inr(netA)} to ${nameOf(a)}.`);
+    return;
+  }
+  if (cmd === '/nemesis') {
+    const who = rest.toLowerCase() || callerId;
+    const pid = ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || nameOf(p).toLowerCase() === who) ?? callerId;
+    const taken = new Map<string, number>();
+    for (const e of (ledger ?? []) as { from_player_id: string; to_player_id: string; amount_inr: number }[]) {
+      if (e.from_player_id !== pid) continue;
+      taken.set(e.to_player_id, (taken.get(e.to_player_id) ?? 0) + e.amount_inr);
+    }
+    if (!taken.size) { await reply(`${nameOf(pid)} has paid nobody. Clean.`); return; }
+    const [nem, amt] = [...taken.entries()].sort((x, y) => y[1] - x[1])[0];
+    await reply(`${nameOf(pid)} pays most to ${nameOf(nem)}: ₹${amt.toLocaleString('en-IN')} all season.`);
+    return;
+  }
+  if (cmd === '/club') {
+    const cid = resolveClub(rest);
+    if (!cid) { await reply('Name a club. Yours, ideally.'); return; }
+    const club = ((clubs ?? []) as { id: string; name: string; league: string; owner_id: string }[]).find((c) => c.id === cid);
+    if (!club) { await reply('No such club.'); return; }
+    const fxAll = ((fx ?? []) as { id: string; home_club_id: string; away_club_id: string; status: string }[]).filter((f) => f.home_club_id === cid || f.away_club_id === cid);
+    const resRows = await db.from('results').select('fixture_id,h90,a90').then((r) => (r.data ?? []) as { fixture_id: string; h90: number; a90: number }[]);
+    const resMap = new Map(resRows.map((r) => [r.fixture_id, r]));
+    let w = 0, l = 0, d = 0, earned = 0;
+    const fids = new Set(fxAll.map((f) => f.id));
+    for (const f of fxAll) {
+      const r = resMap.get(f.id);
+      if (!r) continue;
+      const mine = f.home_club_id === cid ? r.h90 : r.a90;
+      const theirs = f.home_club_id === cid ? r.a90 : r.h90;
+      if (mine > theirs) w++; else if (mine < theirs) l++; else d++;
+    }
+    for (const e of (ledger ?? []) as { fixture_id?: string | null; from_player_id: string; to_player_id: string; amount_inr: number }[]) {
+      if (e.fixture_id && fids.has(e.fixture_id)) {
+        earned += (e.to_player_id === club.owner_id ? e.amount_inr : 0) - (e.from_player_id === club.owner_id ? e.amount_inr : 0);
+      }
+    }
+    const left = fxAll.filter((f) => f.status === 'SCHEDULED').length;
+    await reply(`${club.name} (${nameOf(club.owner_id)}): ${w}W ${l}L ${d}D, ${inr(earned)} generated, ${left} to play.`);
+    return;
+  }
+  if (cmd === '/ledger') {
+    const n = Math.min(Math.max(parseInt(rest || '5', 10) || 5, 1), 10);
+    const rows = ((ledger ?? []) as { description: string; from_player_id: string; to_player_id: string; amount_inr: number }[]).slice(-n).reverse();
+    await reply(rows.map((r) => `${r.description}: ₹${r.amount_inr} ${r.from_player_id} to ${r.to_player_id}`).join('\n') || 'Ledger empty.');
+    return;
+  }
+  if (cmd === '/awards') {
+    const { computeAwards } = await import('@/lib/awards/compute');
+    const a = computeAwards(
+      ['archit', 'vedant', 'harshal', 'anmol'],
+      ((ledger ?? []) as { to_player_id: string; from_player_id: string; amount_inr: number; event_type: string }[]).map((r) => ({ ...r, event_type: r.event_type as 'MATCH' | 'TROPHY' | 'CORRECTION' })),
+      evts.map((e) => ({ player_id: e.player, outcome: e.outcome, occurred_at: e.at })),
+    );
+    await reply(`Most wins: ${a.mostWins ? nameOf(a.mostWins) : '—'}\nMost losses: ${a.mostLosses ? nameOf(a.mostLosses) : '—'}\nMost successful: ${a.mostSuccessfulPlayer ? nameOf(a.mostSuccessfulPlayer) : '—'}\nFull list on the site.`);
+    return;
+  }
+  if (cmd === '/settle') {
+    const { settle } = await import('@/lib/awards/compute');
+    const net: Record<string, number> = { archit: 0, vedant: 0, harshal: 0, anmol: 0 };
+    for (const p of ['archit', 'vedant', 'harshal', 'anmol']) net[p] = bals.get(p)?.net ?? 0;
+    const pays = settle(net);
+    await reply(pays.length ? pays.map((x) => `${nameOf(x.from)} pays ${nameOf(x.to)} ₹${x.amount.toLocaleString('en-IN')}`).join('\n') : 'Everyone is square. No payments needed.');
+    return;
+  }
+  if (cmd === '/quiet') {
+    if (callerRole !== 'COMMISSIONER') { await reply('Commissioner only.'); return; }
+    const mode = rest.toLowerCase();
+    if (mode !== 'on' && mode !== 'off') { await reply('Send "/quiet" plus on or off.'); return; }
+    await db.from('config').upsert({ key: 'quiet_override', value: { mode } }, { onConflict: 'key' });
+    await reply(mode === 'on' ? 'Quiet forced on. Non-urgent messages queue for the morning digest.' : 'Quiet forced off. Everything sends immediately.');
+    return;
+  }
+  if (cmd === '/correct') {
+    if (!rest) { await reply('Send "/correct" plus the right line. Bayern Munich 2-1 Dortmund - DFL-Supercup'); return; }
+    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app'}/api/corrections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ line: rest, preview: true, decidedBy: callerId }),
+    }).then((r) => r.json()).catch(() => ({ error: 'Correction service unreachable.' }));
+    if (res.error || !res.preview) { await reply(res.error ?? 'Could not preview.'); return; }
+    await reply(
+      `Original: ${res.original.score}. Corrected: ${res.corrected.score}. ${res.corrected.summary} Only Archit can confirm.`,
+      [[{ text: 'Confirm correction', callback_data: `correct:${res.fixtureId}:${(res.corrected.score as string).replace('-', ':')}` }]],
+    );
     return;
   }
 }

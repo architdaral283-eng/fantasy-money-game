@@ -38,8 +38,9 @@ export async function POST(req: Request) {
 }
 
 async function handle(req: Request) {
-  const { line, preview, mode, entryId, decidedBy } = (await req.json().catch(() => ({}))) as {
+  const { line, preview, mode, entryId, decidedBy, fixtureId, homeGoals: hIn, awayGoals: aIn } = (await req.json().catch(() => ({}))) as {
     line?: string; preview?: boolean; mode?: 'correct' | 'dedupe'; entryId?: number; decidedBy?: string;
+    fixtureId?: string; homeGoals?: number; awayGoals?: number;
   };
   const db = supabaseService();
   const { data: actor } = await db.from('players').select('role').eq('id', decidedBy ?? 'archit').single();
@@ -78,36 +79,60 @@ async function handle(req: Request) {
     return NextResponse.json({ ok: true, summary: `Duplicate #${entryId} reversed. Ledger is clean.` });
   }
 
-  if (!line?.trim()) return NextResponse.json({ error: 'Type the corrected result first.' }, { status: 400 });
-  const parsed = parseOneLine(line);
-  if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
-  const compId = COMP_ID[parsed.competitionCode];
-  const isOneOff = ONE_OFFS.has(parsed.competitionCode);
-  const isUcl = parsed.competitionCode === 'UCL';
-  const round = isOneOff ? 'One-off' : isUcl ? 'League Phase' : 'League';
+  let fixture: { id: string; home_club_id: string; away_club_id: string; status: string } | null = null;
+  let competitionCode = '';
+  let round = '';
+  let homeGoals = 0;
+  let awayGoals = 0;
+  let lineLabel = line ?? '';
 
-  // find the RECORDED fixture — named order first, else the reverse leg
-  const { data: exact } = await db.from('fixtures').select('*, competitions!inner(code)')
-    .eq('competition_id', compId).eq('round', round)
-    .eq('home_club_id', parsed.homeClubId).eq('away_club_id', parsed.awayClubId)
-    .maybeSingle();
-  let fixture = exact;
-  let swapped = false;
-  if (!fixture) {
-    const { data: rev } = await db.from('fixtures').select('*, competitions!inner(code)')
+  if (fixtureId && hIn !== undefined && aIn !== undefined && !preview) {
+    // direct apply (chat confirm button): score already oriented to the venue
+    const { data: fx } = await db.from('fixtures').select('*, competitions!inner(code)').eq('id', fixtureId).single();
+    if (!fx) return NextResponse.json({ error: 'Fixture not found.' }, { status: 404 });
+    if ((fx as { status: string }).status !== 'RECORDED') {
+      return NextResponse.json({ error: 'Only RECORDED fixtures can be corrected.' }, { status: 409 });
+    }
+    fixture = fx as { id: string; home_club_id: string; away_club_id: string; status: string };
+    competitionCode = ((fx as { competitions: { code: string } }).competitions)?.code ?? '';
+    round = (fx as { round: string }).round;
+    homeGoals = hIn;
+    awayGoals = aIn;
+    lineLabel = `${fixture.home_club_id} ${hIn}-${aIn} ${fixture.away_club_id}`;
+  } else {
+    if (!line?.trim()) return NextResponse.json({ error: 'Type the corrected result first.' }, { status: 400 });
+    const parsed = parseOneLine(line);
+    if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
+    const compId = COMP_ID[parsed.competitionCode];
+    const isOneOff = ONE_OFFS.has(parsed.competitionCode);
+    const isUcl = parsed.competitionCode === 'UCL';
+    competitionCode = parsed.competitionCode;
+    round = isOneOff ? 'One-off' : isUcl ? 'League Phase' : 'League';
+
+    // find the RECORDED fixture — named order first, else the reverse leg
+    const { data: exact } = await db.from('fixtures').select('*, competitions!inner(code)')
       .eq('competition_id', compId).eq('round', round)
-      .eq('home_club_id', parsed.awayClubId).eq('away_club_id', parsed.homeClubId)
+      .eq('home_club_id', parsed.homeClubId).eq('away_club_id', parsed.awayClubId)
       .maybeSingle();
-    fixture = rev;
-    swapped = true;
+    fixture = exact;
+    let swapped = false;
+    if (!fixture) {
+      const { data: rev } = await db.from('fixtures').select('*, competitions!inner(code)')
+        .eq('competition_id', compId).eq('round', round)
+        .eq('home_club_id', parsed.awayClubId).eq('away_club_id', parsed.homeClubId)
+        .maybeSingle();
+      fixture = rev;
+      swapped = true;
+    }
+    if (!fixture) return NextResponse.json({ error: 'No recorded fixture matches that line.' }, { status: 404 });
+    if (fixture.status !== 'RECORDED') {
+      return NextResponse.json({ error: `Fixture is ${fixture.status} — only RECORDED fixtures can be corrected.` }, { status: 409 });
+    }
+    homeGoals = swapped ? parsed.awayGoals : parsed.homeGoals;
+    awayGoals = swapped ? parsed.homeGoals : parsed.awayGoals;
+    (fixture as { swapped?: boolean }).swapped = swapped;
   }
-  if (!fixture) return NextResponse.json({ error: 'No recorded fixture matches that line.' }, { status: 404 });
-  if (fixture.status !== 'RECORDED') {
-    return NextResponse.json({ error: `Fixture is ${fixture.status} — only RECORDED fixtures can be corrected.` }, { status: 409 });
-  }
-
-  const homeGoals = swapped ? parsed.awayGoals : parsed.homeGoals;
-  const awayGoals = swapped ? parsed.homeGoals : parsed.awayGoals;
+  const swapped = (fixture as { swapped?: boolean }).swapped ?? false;
 
   const { data: originalRows } = await db.from('ledger_entries').select('*')
     .eq('fixture_id', fixture.id).eq('is_correction', false).order('id');
@@ -125,7 +150,7 @@ async function handle(req: Request) {
   const originalScore = resultRow ? `${resultRow.h90}-${resultRow.a90}` : 'unknown';
 
   const proposal = scoreSingleFixture({
-    competitionCode: parsed.competitionCode, round,
+    competitionCode, round,
     homeClubId: fixture.home_club_id, awayClubId: fixture.away_club_id,
     scoreAt90: { home: homeGoals, away: awayGoals },
     scoreAt120: null, shootout: null, terminalStatus: 'FT',
@@ -200,7 +225,7 @@ async function handle(req: Request) {
 
   await db.from('audit_log').insert({
     actor_id: 'archit', action: 'CORRECT', subject_type: 'FIXTURE', subject_id: fixture.id,
-    after: { line, correctedScore: `${homeGoals}-${awayGoals}` },
+    after: { line: lineLabel, correctedScore: `${homeGoals}-${awayGoals}` },
   });
 
   // zero-sum proof
