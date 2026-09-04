@@ -156,7 +156,8 @@ export function scoreSingleFixture(r: NormalisedResult): Proposal {
   const homeOwner = ownerOf(r.homeClubId);
   const awayOwner = ownerOf(r.awayClubId);
 
-  const isKnockoutSingleLeg = isSingleLegCup(r.competitionCode, r.round);
+  // UCL League Phase is single-meeting but NOT a knockout: draws are normal ₹0 results.
+  const isKnockoutSingleLeg = isSingleLegCup(r.competitionCode, r.round) && r.round !== 'League Phase';
 
   // effective score: 120' score if AET/PEN, else 90'
   let eff: ScorePair = r.scoreAt90;

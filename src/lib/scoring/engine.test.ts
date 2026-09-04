@@ -55,6 +55,16 @@ describe('Match money (§3.4)', () => {
     expect(p.transfers).toHaveLength(0);
   });
 
+  it('3b. UCL league-phase draw → ₹0 recorded draw, NOT manual review', () => {
+    const p = scoreSingleFixture(
+      base({ competitionCode: 'UCL', round: 'League Phase', homeClubId: 'arsenal', awayClubId: 'real-madrid', scoreAt90: { home: 1, away: 1 } }),
+    );
+    expect(p.kind).toBe('LEAGUE_RESULT');
+    expect(p.isDraw).toBe(true);
+    expect(p.amount).toBe(0);
+    expect(p.transfers).toHaveLength(0);
+  });
+
   it('4. Real Madrid v RB Leipzig UCL (both Vedant) → ₹0, zero rows, no W/L/D', () => {
     const p = scoreSingleFixture(
       base({ competitionCode: 'UCL', round: 'League Phase', homeClubId: 'real-madrid', awayClubId: 'rb-leipzig', scoreAt90: { home: 3, away: 1 } }),
