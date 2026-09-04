@@ -18,6 +18,15 @@ const COMP_ID: Record<string, string> = {
  * v1 scope: the 48 league fixtures + 21 UCL league-phase ties.
  */
 export async function POST(req: Request) {
+  try {
+    return await handle(req);
+  } catch (e) {
+    console.error('manual-entry failed:', e);
+    return NextResponse.json({ error: `Server error: ${(e as Error).message}` }, { status: 500 });
+  }
+}
+
+async function handle(req: Request) {
   const { line } = (await req.json().catch(() => ({}))) as { line?: string };
   if (!line?.trim()) return NextResponse.json({ error: 'Type a result first.' }, { status: 400 });
   const parsed = parseOneLine(line);

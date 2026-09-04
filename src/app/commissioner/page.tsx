@@ -20,11 +20,14 @@ export default function Commissioner() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ line }),
       });
-      const j = await res.json();
-      if (!res.ok) { setMsg(`❌ ${j.error}`); if (j.approvalId) setApprovalId(j.approvalId); return; }
+      const text = await res.text();
+      let j: { error?: string; approvalId?: string; summary?: string; swapped?: boolean };
+      try { j = JSON.parse(text); }
+      catch { setMsg(`❌ Server returned HTTP ${res.status} (not JSON). Message: ${text.slice(0, 200)}`); setBusy(false); return; }
+      if (!res.ok) { setMsg(`❌ ${j.error}`); if (j.approvalId) setApprovalId(j.approvalId); setBusy(false); return; }
       setMsg(`✅ Proposal ready: ${j.summary}${j.swapped ? ' (recorded as the reverse leg)' : ''}`);
-      setApprovalId(j.approvalId);
-    } catch { setMsg('❌ Network error — try again.'); }
+      setApprovalId(j.approvalId ?? null);
+    } catch { setMsg('❌ Could not reach the server at all — check your internet connection and try again.'); }
     setBusy(false);
   };
 
