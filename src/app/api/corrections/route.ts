@@ -30,12 +30,49 @@ export async function POST(req: Request) {
 }
 
 async function handle(req: Request) {
-  const { line, preview } = (await req.json().catch(() => ({}))) as { line?: string; preview?: boolean };
+  const { line, preview, mode, entryId, decidedBy } = (await req.json().catch(() => ({}))) as {
+    line?: string; preview?: boolean; mode?: 'correct' | 'dedupe'; entryId?: number; decidedBy?: string;
+  };
+  const db = supabaseService();
+  const { data: actor } = await db.from('players').select('role').eq('id', decidedBy ?? 'archit').single();
+  if (actor?.role !== 'COMMISSIONER') {
+    return NextResponse.json({ error: 'Commissioner only.' }, { status: 403 });
+  }
+
+  // ——— dedupe: append a single REVERSAL of a duplicated correction row ———
+  if (mode === 'dedupe') {
+    if (!entryId) return NextResponse.json({ error: 'Missing entryId.' }, { status: 400 });
+    const { data: target } = await db.from('ledger_entries').select('*').eq('id', entryId).single() as {
+      data: { id: number; description: string; from_player_id: string; to_player_id: string; amount_inr: number; event_type: string; fixture_id: string | null; is_correction: boolean } | null;
+    };
+    if (!target || !target.is_correction || !target.description.startsWith('CORRECTION:')) {
+      return NextResponse.json({ error: 'Only a CORRECTION row can be deduped.' }, { status: 422 });
+    }
+    const { data: already } = await db.from('ledger_entries').select('id').eq('corrects_entry_id', entryId).ilike('description', 'REVERSAL of duplicate%');
+    if ((already ?? []).length > 0) {
+      return NextResponse.json({ error: `Entry #${entryId} was already deduped.` }, { status: 409 });
+    }
+    const { error } = await db.from('ledger_entries').insert({
+      event_type: target.event_type,
+      description: `REVERSAL of duplicate entry #${entryId}`,
+      from_player_id: target.to_player_id,
+      to_player_id: target.from_player_id,
+      amount_inr: target.amount_inr,
+      fixture_id: target.fixture_id,
+      is_correction: true,
+      corrects_entry_id: entryId,
+    });
+    if (error) throw new Error(`Dedupe failed: ${error.message}`);
+    await db.from('audit_log').insert({ actor_id: decidedBy ?? 'archit', action: 'DEDUPE', subject_type: 'LEDGER', subject_id: String(entryId) });
+    const { data: balances } = await db.from('player_balances').select('net_inr');
+    const sum = (balances ?? []).reduce((s: number, r: { net_inr: number }) => s + Number(r.net_inr), 0);
+    if (sum !== 0) throw new Error(`Zero-sum broken after dedupe (sum=${sum}).`);
+    return NextResponse.json({ ok: true, summary: `Duplicate #${entryId} reversed. Ledger is clean.` });
+  }
+
   if (!line?.trim()) return NextResponse.json({ error: 'Type the corrected result first.' }, { status: 400 });
   const parsed = parseOneLine(line);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
-
-  const db = supabaseService();
   const compId = COMP_ID[parsed.competitionCode];
   const isOneOff = ONE_OFFS.has(parsed.competitionCode);
   const isUcl = parsed.competitionCode === 'UCL';
@@ -67,6 +104,16 @@ async function handle(req: Request) {
   const { data: originalRows } = await db.from('ledger_entries').select('*')
     .eq('fixture_id', fixture.id).eq('is_correction', false).order('id');
   const { data: resultRow } = await db.from('results').select('*').eq('fixture_id', fixture.id).maybeSingle();
+
+  // double-submit guard: already corrected to exactly this score → refuse
+  if (resultRow && resultRow.h90 === homeGoals && resultRow.a90 === awayGoals) {
+    const { data: prior } = await db.from('ledger_entries').select('id')
+      .eq('fixture_id', fixture.id).eq('is_correction', true)
+      .ilike('description', `CORRECTION:%${homeGoals}-${awayGoals}%`);
+    if ((prior ?? []).length > 0) {
+      return NextResponse.json({ error: `Already corrected to ${homeGoals}-${awayGoals} — nothing to do. Check the Ledger.` }, { status: 409 });
+    }
+  }
   const originalScore = resultRow ? `${resultRow.h90}-${resultRow.a90}` : 'unknown';
 
   const proposal = scoreSingleFixture({
