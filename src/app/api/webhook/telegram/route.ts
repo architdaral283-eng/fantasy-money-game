@@ -424,7 +424,7 @@ async function statsReply(
   const { resolveClub } = await import('@/lib/parse/one-line');
   const [{ data: bal }, { data: wld }, { data: fx }, { data: tr }, { data: ledger }, { data: clubs }, { data: comps }] = await Promise.all([
     db.from('player_balances').select('id,name,net_inr'),
-    db.from('wld_records').select('player_id,outcome,occurred_at'),
+    db.from('wld_records').select('player_id,fixture_id,outcome,occurred_at'),
     db.from('fixtures').select('id,competition_id,home_club_id,away_club_id,kickoff_utc,status,is_same_owner'),
     db.from('trophies').select('competition_id,status'),
     db.from('ledger_entries').select('from_player_id,to_player_id,amount_inr,event_type,created_at,description'),
@@ -531,34 +531,34 @@ async function statsReply(
     return;
   }
   if (cmd === '/h2h') {
-    const parts = rest.toLowerCase().split(/[\s,]+v[\s,]+|[\s,]+/).filter(Boolean);
+    const parts = rest.toLowerCase().split(/[\s,]+/).filter((x) => x && x !== 'v' && x !== 'vs');
     const ids = parts.map((x) => ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === x || nameOf(p).toLowerCase() === x)).filter(Boolean) as string[];
     if (ids.length < 2) { await reply('Name two players. /h2h archit vedant'); return; }
     const [a, b] = ids;
-    const fxRows = ((await db.from('fixtures').select('id,home_club_id,away_club_id').eq('status', 'RECORDED').then((r) => r)) as { data: { id: string; home_club_id: string; away_club_id: string }[] | null });
     const owners = new Map(((clubs ?? []) as { id: string; owner_id: string }[]).map((c) => [c.id, c.owner_id]));
-    const wldByFx = new Map<string, { player_id: string; outcome: string }[]>();
-    for (const w of (wld ? await db.from('wld_records').select('player_id,fixture_id,outcome').then((r) => (r.data ?? []) as { player_id: string; fixture_id: string; outcome: string }[]) : [])) {
-      const l = wldByFx.get(w.fixture_id) ?? [];
-      l.push(w);
-      wldByFx.set(w.fixture_id, l);
-    }
-    let aw = 0, bw = 0, dr = 0, netA = 0;
-    const led = ((ledger ?? []) as { fixture_id?: string | null; from_player_id: string; to_player_id: string; amount_inr: number }[]);
-    for (const f of fxRows.data ?? []) {
-      const ownersPair = new Set([owners.get(f.home_club_id), owners.get(f.away_club_id)]);
-      if (!(ownersPair.has(a) && ownersPair.has(b))) continue;
-      for (const w of wldByFx.get(f.id) ?? []) {
-        if (w.outcome === 'D') { dr++; continue; }
-        if (w.player_id === a) { if (w.outcome === 'W') aw++; else bw++; }
-        if (w.player_id === b) { if (w.outcome === 'W') bw++; else aw++; }
+    const wldAll = (wld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[];
+    const ledAll = (ledger ?? []) as { fixture_id?: string | null; from_player_id: string; to_player_id: string; amount_inr: number }[];
+    let aw = 0, bw = 0, dr = 0, netA = 0, games = 0;
+    for (const f of (fx ?? []) as { id: string; home_club_id: string; away_club_id: string; status: string }[]) {
+      if (f.status !== 'RECORDED') continue;
+      const pair = new Set([owners.get(f.home_club_id), owners.get(f.away_club_id)]);
+      if (!(pair.has(a) && pair.has(b))) continue;
+      games++;
+      const rows = wldAll.filter((w) => w.fixture_id === f.id);
+      if (rows.length && rows.every((w) => w.outcome === 'D')) { dr++; }
+      else {
+        for (const w of rows) {
+          if (w.player_id === a) { if (w.outcome === 'W') aw++; else bw++; }
+          else if (w.player_id === b) { if (w.outcome === 'W') bw++; else aw++; }
+        }
       }
-      for (const e of led.filter((x) => x.fixture_id === f.id)) {
+      for (const e of ledAll.filter((x) => x.fixture_id === f.id)) {
         netA += (e.to_player_id === a ? e.amount_inr : 0) - (e.from_player_id === a ? e.amount_inr : 0);
       }
     }
-    const games = aw + bw + (dr ? 1 : 0);
-    await reply(`${nameOf(a)} v ${nameOf(b)}: ${games} played, ${aw}-${bw}-${dr} (W-L-D for ${nameOf(a)}), net ${inr(netA)} to ${nameOf(a)}.`);
+    await reply(games === 0
+      ? `${nameOf(a)} v ${nameOf(b)}: nothing played yet.`
+      : `${nameOf(a)} v ${nameOf(b)}: ${games} played, ${aw}-${bw}-${dr} (W-L-D for ${nameOf(a)}), net ${inr(netA)} to ${nameOf(a)}.`);
     return;
   }
   if (cmd === '/nemesis') {
