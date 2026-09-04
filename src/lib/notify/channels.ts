@@ -33,6 +33,20 @@ export class TelegramAdapter implements NotificationChannel {
     const json = (await res.json()) as { result?: { message_id?: number } };
     return { messageId: String(json.result?.message_id ?? 'unknown') };
   }
+
+  /** Standings table as a photo (PNG bytes). */
+  async sendPhoto(chatId: string, caption: string, png: ArrayBuffer): Promise<{ messageId: string }> {
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('caption', caption.slice(0, 1024));
+    form.append('photo', new Blob([png], { type: 'image/png' }), 'standings.png');
+    const res = await fetch(`https://api.telegram.org/bot${this.botToken}/sendPhoto`, {
+      method: 'POST', body: form,
+    });
+    if (!res.ok) throw new Error(`telegram photo ${res.status}: ${await res.text()}`);
+    const json = (await res.json()) as { result?: { message_id?: number } };
+    return { messageId: String(json.result?.message_id ?? 'unknown') };
+  }
 }
 
 export class WhatsAppCloudAdapter implements NotificationChannel {
