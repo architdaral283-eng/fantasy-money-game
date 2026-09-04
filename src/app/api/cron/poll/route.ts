@@ -75,10 +75,14 @@ export async function POST(req: Request) {
         await db.from('api_call_log').insert({ provider: 'football-data', endpoint: `schedule:${code}` });
         for (const s of sched) {
           const sRound = code === 'UCL' ? 'League Phase' : 'League';
-          const { data: fx } = await db.from('fixtures').select('id,kickoff_utc,provider_fixture_id')
+          // exact venue only: each leg is dated by its own provider match.
+          // (Never OR both legs + maybeSingle: two rows make maybeSingle
+          // return nothing, silently skipping every league pair.)
+          const { data: fx, error: fxErr } = await db.from('fixtures').select('id,kickoff_utc,provider_fixture_id')
             .eq('competition_id', COMP_ID[code]).eq('round', sRound)
-            .or(`and(home_club_id.eq.${s.homeClubId},away_club_id.eq.${s.awayClubId}),and(home_club_id.eq.${s.awayClubId},away_club_id.eq.${s.homeClubId})`)
+            .eq('home_club_id', s.homeClubId).eq('away_club_id', s.awayClubId)
             .maybeSingle();
+          if (fxErr) throw new Error(`fixture lookup: ${fxErr.message}`);
           if (fx && (!fx.kickoff_utc || !fx.provider_fixture_id)) {
             await db.from('fixtures').update({ kickoff_utc: s.kickoffUtc, provider_fixture_id: s.providerFixtureId }).eq('id', (fx as { id: string }).id);
             diag.scheduled++;
