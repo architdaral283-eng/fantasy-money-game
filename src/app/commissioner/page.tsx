@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 /**
  * Commissioner console — manual one-line entry → Submit (creates a PENDING
@@ -10,9 +10,18 @@ export default function Commissioner() {
   const [line, setLine] = useState('Arsenal 2-0 Manchester City - Premier League');
   const [msg, setMsg] = useState<string>('');
   const [approvalId, setApprovalId] = useState<string | null>(null);
-  const [ratified1, setRatified1] = useState(false);
-  const [ratified2, setRatified2] = useState(false);
+  const [ratified1, setRatified1] = useState<boolean | null>(null);
+  const [ratified2, setRatified2] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // hide amendment boxes once ratified (persisted in config, not local clicks)
+  useEffect(() => {
+    fetch('/api/amendments/status').then((r) => r.json()).then((j) => {
+      const c = (j.config ?? {}) as Record<string, { status?: string }>;
+      setRatified1(c.amendment_1_assisted_mode?.status === 'ratified');
+      setRatified2(c.amendment_2_oneoffs?.status === 'ratified');
+    }).catch(() => { setRatified1(false); setRatified2(false); });
+  }, []);
 
   const ratify = async (key: string, done: (v: boolean) => void) => {
     const res = await fetch('/api/amendments/ratify', {
@@ -60,7 +69,7 @@ export default function Commissioner() {
   return (
     <>
       <h2>Commissioner Console</h2>
-      {!ratified1 && (
+      {ratified1 === false && (
         <div className="card">
           <h4>Amendment I — Assisted Operating Mode (pending ratification)</h4>
           <p>The Commissioner may proactively retrieve results from designated data providers. Retrieved results are <strong>proposals only</strong> and carry no force. No proposal enters the ledger without explicit approval from Archit.</p>
@@ -68,7 +77,7 @@ export default function Commissioner() {
           <p className="sans">The poller cannot run until this is accepted.</p>
         </div>
       )}
-      {!ratified2 && (
+      {ratified2 === false && (
         <div className="card">
           <h4>Amendment II — One-off cups in scope (pending: needs all four members)</h4>
           <p>Community Shield and DFL-Supercup enter scope for <strong>match money only</strong> (₹500/₹1000, single leg, extra time and penalties as per Article V). No trophy, not part of the ₹24,000 pool. Ratify only once Vedant, Harshal and Anmol have all agreed.</p>
@@ -108,26 +117,37 @@ function CorrectionForm() {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
+  const [done, setDone] = useState(false);
 
   const call = async (preview: boolean) => {
     setBusy(true); setMsg('');
     try {
       const res = await fetch('/api/corrections', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ line, preview }),
+        body: JSON.stringify({ line, preview, decidedBy: 'archit' }),
       });
       const j = await res.json();
-      if (!res.ok) { setMsg(`❌ ${j.error}`); setReady(false); return; }
+      if (!res.ok) { setMsg(`❌ ${j.error}`); setReady(false); setBusy(false); return; }
       if (j.preview) {
         setMsg(`Original: ${j.original.score} (${(j.original.rows as string[]).join('; ') || 'no money rows'}) → Corrected: ${j.corrected.score} — ${j.corrected.summary}`);
         setReady(true);
       } else {
         setMsg(`✅ ${j.summary}`);
         setReady(false);
+        setDone(true);
       }
     } catch { setMsg('❌ Could not reach the server — check connection and try again.'); }
     setBusy(false);
   };
+
+  if (done) {
+    return (
+      <>
+        <p className="sans">{msg}</p>
+        <p><button className="sans" onClick={() => { setDone(false); setMsg(''); setReady(false); }}>Correct another result</button></p>
+      </>
+    );
+  }
 
   return (
     <>

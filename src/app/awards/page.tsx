@@ -6,7 +6,7 @@ const AWARDS: [string, string][] = [
   ['Most Money Lost', 'gross outgoings'], ['Biggest Victory', 'largest winning margin'],
   ['Biggest Defeat', 'largest losing margin'], ['Best Club', 'most wins by a single club'],
   ['Worst Club', 'most losses by a single club'], ['Most Valuable Club', 'most ₹ earned for its owner'],
-  ['Largest Upset', 'provisional definition — pending Archit\u2019s ratification'],
+  ['Largest Upset', 'lowest winning balance at kickoff (ratified)'],
   ['Most Successful Player', 'highest net balance'],
 ];
 
