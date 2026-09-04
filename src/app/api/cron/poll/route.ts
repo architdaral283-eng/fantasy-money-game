@@ -45,7 +45,7 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
+  const summary = { synced: 0, proposed: 0, autoWritten: 0, autoLogged: 0, reminders: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
 
   // schedule sync runs when fixtures lack dates or the last sync is >24h old (quota care)
   const { data: lastSync } = await db.from('config').select('value').eq('key', 'last_schedule_sync').single();
@@ -183,7 +183,8 @@ export async function POST(req: Request) {
         continue;
       }
 
-      // money or W/L/D at stake → proposal + Archit one-tap buttons
+      // money or W/L/D at stake → proposal. Amendment III: machine-verified
+      // results auto-write; anything else (or any failure) falls back to Archit.
       const { data: approval } = await db.from('pending_approvals').insert({
         subject_type: 'FIXTURE', subject_id: fixture.id,
         proposed_payload: {
@@ -205,6 +206,41 @@ export async function POST(req: Request) {
       if (!approval) continue;
       await db.from('fixtures').update({ status: 'PENDING_APPROVAL' }).eq('id', fixture.id);
       summary.proposed++;
+
+      const { requiresApproval } = await import('@/lib/entry/policy');
+      const { data: amd3 } = await db.from('config').select('value').eq('key', 'amendment_3_auto_write').single();
+      const autoOk = !requiresApproval('poller', (amd3?.value as { status?: string })?.status === 'ratified');
+      if (autoOk) {
+        try {
+          const { approveProposal } = await import('@/lib/ledger/writer');
+          const { refreshPin, fireRoast } = await import('@/app/api/webhook/telegram/route');
+          await approveProposal(db, (approval as { id: string }).id, 'archit');
+          summary.autoWritten++;
+          const scoreline = `${fixture.home_club_id} ${swapped ? r.scoreAt90.away : r.scoreAt90.home}-${swapped ? r.scoreAt90.home : r.scoreAt90.away} ${fixture.away_club_id}`;
+          await refreshPin(db);
+          try {
+            const pngRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app'}/api/og/standings`);
+            const png = await pngRes.arrayBuffer();
+            const { fanOutPhoto } = await import('@/lib/notify/send');
+            await fanOutPhoto(db, 'result_recorded', `Recorded automatically. ${scoreline}. Standings attached.`, async () => png);
+          } catch { /* photo best-effort */ }
+          const roast = await fireRoast(db, fixture.id, false).catch(() => null);
+          if (roast) {
+            const { sendGroup } = await import('@/lib/notify/quiet');
+            await sendGroup(db, roast);
+          }
+          const { TelegramAdapter: TA } = await import('@/lib/notify/channels');
+          const tat = process.env.TELEGRAM_BOT_TOKEN ? new TA(process.env.TELEGRAM_BOT_TOKEN) : null;
+          const { data: archit2 } = await db.from('players').select('telegram_chat_id').eq('id', 'archit').single();
+          if (tat && archit2?.telegram_chat_id) {
+            await tat.send(archit2.telegram_chat_id as string, 'result_recorded', { text: `Recorded automatically. ${scoreline}.` }).catch(() => undefined);
+          }
+          continue;
+        } catch (e) {
+          summary.errors.push(`auto-write ${(approval as { id: string }).id} failed, left pending: ${(e as Error).message}`);
+          // fall through to human notify below
+        }
+      }
 
       const p = proposal;
       const scoreline = `${fixture.home_club_id} ${swapped ? r.scoreAt90.away : r.scoreAt90.home}-${swapped ? r.scoreAt90.home : r.scoreAt90.away} ${fixture.away_club_id}`;

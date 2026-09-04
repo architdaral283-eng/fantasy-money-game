@@ -500,7 +500,7 @@ async function roastContextFor(db: ReturnType<typeof supabaseService>, fixtureId
 }
 
 /** Fire one roast for a fixture: select, render, log. Reroll reuses context, new line. */
-async function fireRoast(db: ReturnType<typeof supabaseService>, fixtureId: string, reroll: boolean): Promise<string | null> {
+export async function fireRoast(db: ReturnType<typeof supabaseService>, fixtureId: string, reroll: boolean): Promise<string | null> {
   const { pickTemplate, renderBody, statPrefix } = await import('@/lib/roast/select');
   const built = await roastContextFor(db, fixtureId, false);
   if (!built) return null;
