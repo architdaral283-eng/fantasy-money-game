@@ -6,6 +6,7 @@ import { scoreSingleFixture, type NormalisedResult } from '@/lib/scoring/engine'
 import { ownerOf } from '@/lib/domain/constants';
 import { fanOutText } from '@/lib/notify/send';
 import { dueReminders } from '@/lib/notify/send';
+import { drainQueue, architAwake } from '@/lib/notify/quiet';
 
 function authed(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number }[] };
+  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number }[] };
 
   // schedule sync runs when fixtures lack dates or the last sync is >24h old (quota care)
   const { data: lastSync } = await db.from('config').select('value').eq('key', 'last_schedule_sync').single();
@@ -183,19 +184,40 @@ export async function POST(req: Request) {
 
       const p = proposal;
       const scoreline = `${fixture.home_club_id} ${swapped ? r.scoreAt90.away : r.scoreAt90.home}-${swapped ? r.scoreAt90.home : r.scoreAt90.away} ${fixture.away_club_id}`;
-      const what = p.isDraw ? 'Draw — ₹0' : `₹${p.amount} ${p.winnerPlayer} ← ${p.loserPlayer}`;
-      // direct Telegram message to Archit only, with inline Approve/Reject buttons
+      const what = p.isDraw ? 'Draw. ₹0' : `₹${p.amount} ${p.winnerPlayer} takes it from ${p.loserPlayer}`;
+      // single-source: no keyboard, force review. Batching: >5 pending sends one summary.
+      const { count: pendN } = await db.from('pending_approvals').select('id', { count: 'exact', head: true }).eq('status', 'PENDING');
+      const single = true; // football-data only in this loop; API-Football cross-check lands with cups
+      if ((pendN ?? 0) > 5) {
+        if (!summary.batched) {
+          const { TelegramAdapter } = await import('@/lib/notify/channels');
+          const tg = process.env.TELEGRAM_BOT_TOKEN ? new TelegramAdapter(process.env.TELEGRAM_BOT_TOKEN) : null;
+          const { data: archit } = await db.from('players').select('telegram_chat_id').eq('id', 'archit').single();
+          if (tg && archit?.telegram_chat_id && (await architAwake(db).catch(() => true))) {
+            await tg.send(archit.telegram_chat_id as string, 'result_approval_request', {
+              text: `${pendN} results waiting. Review all on the site.`,
+            }).catch(() => undefined);
+          }
+          summary.batched = true;
+        }
+        continue;
+      }
+      // direct Telegram message to Archit only. Single-source: no keyboard, forced review.
       const { TelegramAdapter } = await import('@/lib/notify/channels');
       const tg = process.env.TELEGRAM_BOT_TOKEN ? new TelegramAdapter(process.env.TELEGRAM_BOT_TOKEN) : null;
       const { data: archit } = await db.from('players').select('telegram_chat_id').eq('id', 'archit').single();
       if (tg && archit?.telegram_chat_id) {
         try {
+          const { data: bals } = await db.from('player_balances').select('id,net_inr');
+          const net = new Map(((bals ?? []) as { id: string; net_inr: number }[]).map((b) => [b.id, Number(b.net_inr)]));
+          for (const t of proposal.transfers) {
+            net.set(t.from, (net.get(t.from) ?? 0) - t.amount);
+            net.set(t.to, (net.get(t.to) ?? 0) + t.amount);
+          }
+          const after = ['archit', 'vedant', 'harshal', 'anmol']
+            .map((p) => `${p} ${net.get(p) ?? 0 >= 0 ? '+' : '−'}₹${Math.abs(net.get(p) ?? 0).toLocaleString('en-IN')}`).join(' ');
           const sent = await tg.send(archit.telegram_chat_id as string, 'result_approval_request', {
-            text: `${code}: ${scoreline}\n${what} · ${r.terminalStatus} · single source`,
-            buttons: [
-              { id: `approve:${approval.id}`, title: 'Approve' },
-              { id: `reject:${approval.id}`, title: 'Reject' },
-            ],
+            text: `${code}: ${scoreline}\n${what} · ${r.terminalStatus} · single source\nAfter: ${after}\nSingle source. Review on the site before approving.`,
           });
           await db.from('pending_approvals').update({ provider_message_id: sent.messageId }).eq('id', approval.id);
         } catch (e) {
@@ -219,5 +241,8 @@ export async function POST(req: Request) {
     summary.reminders++;
   }
 
-  return NextResponse.json({ ok: true, ...summary });
+  // release anything queued through quiet hours or the daily ceiling
+  const drained = await drainQueue(db).catch(() => ({ released: 0 }));
+
+  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released });
 }

@@ -25,7 +25,15 @@ export async function POST(req: Request) {
     return await handle(req);
   } catch (e) {
     console.error('correction failed:', e);
-    return NextResponse.json({ error: `Server error: ${(e as Error).message}` }, { status: 500 });
+    const msg = (e as Error).message;
+    if (/Zero-sum broken/.test(msg)) {
+      try {
+        const { supabaseService } = await import('@/lib/db/supabase');
+        const { zeroSumAlert } = await import('@/lib/notify/send');
+        await zeroSumAlert(supabaseService(), msg);
+      } catch { /* alert best-effort */ }
+    }
+    return NextResponse.json({ error: `Server error: ${msg}` }, { status: 500 });
   }
 }
 

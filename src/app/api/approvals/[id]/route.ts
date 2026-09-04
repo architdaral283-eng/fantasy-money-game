@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { approveProposal } from '@/lib/ledger/writer';
+import { zeroSumAlert, clearLedgerLock } from '@/lib/notify/send';
 
 /** Commissioner approve/reject — role check + idempotency (§6). */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -17,8 +18,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   try {
     const r = await approveProposal(db, id, decidedBy);
+    await clearLedgerLock(db);
     return NextResponse.json(r);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 409 });
+    const msg = (e as Error).message;
+    if (/Zero-sum broken/.test(msg)) await zeroSumAlert(db, msg);
+    return NextResponse.json({ error: msg }, { status: 409 });
   }
 }

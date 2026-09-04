@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { approveProposal } from '@/lib/ledger/writer';
 import {
-  fanOutPhoto, groupId, sendHtml, editText, pinMessage, answerCallback, notifyArchitApproval,
+  fanOutPhoto, groupId, sendHtml, editText, pinMessage, answerCallback, notifyArchitApproval, zeroSumAlert, clearLedgerLock,
 } from '@/lib/notify/send';
+import { markInbound, sendGroup } from '@/lib/notify/quiet';
 import { parseCommand, parseOneLine } from '@/lib/parse/one-line';
 import { submitManualLine } from '@/lib/entry/submit';
 import { buildPinText } from '@/lib/notify/panel';
@@ -122,6 +123,7 @@ export async function POST(req: Request) {
     const finish = (text?: string, alert = false) => answerCallback(cq.id ?? '', text, alert);
     const [kind, arg] = (cq.data as string).split(':');
     const me = await playerByTg(db, cq.from?.id);
+    if (me) await markInbound(db, me.id);
 
     // pin panel navigation (any linked player)
     if (kind === 'p') {
@@ -176,14 +178,9 @@ export async function POST(req: Request) {
         const { data: approval } = await db.from('pending_approvals').select('proposed_payload').eq('id', arg).single();
         const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string };
         if (architChat && dmMid) await editText(architChat, dmMid, `APPROVED ${stamp} IST\n${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}`);
-        // group post + pin refresh + photo
-        const gid = await groupId(db);
-        if (gid) {
-          await sendHtml(gid, `Recorded. ${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}.`);
-          await refreshPin(db);
-        } else {
-          await refreshPin(db);
-        }
+        await sendGroup(db, `Recorded. ${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}.`);
+        await refreshPin(db);
+        if (await clearLedgerLock(db)) await refreshPin(db);
         try {
           const pngRes = await fetch(`${APP_URL}/api/og/standings`);
           const png = await pngRes.arrayBuffer();
@@ -193,8 +190,9 @@ export async function POST(req: Request) {
         const msg = (e as Error).message;
         if (/Already decided/.test(msg) && architChat && dmMid) {
           await editText(architChat, dmMid, `Already decided. Nothing written twice.`);
-        } else if (architChat) {
-          await sendHtml(architChat, `Approval failed. ${msg}`);
+        } else {
+          if (/Zero-sum broken/.test(msg)) await zeroSumAlert(db, msg);
+          if (architChat) await sendHtml(architChat, `Approval failed. ${msg}`);
         }
       }
       return NextResponse.json({ ok: true });
@@ -210,6 +208,7 @@ export async function POST(req: Request) {
   const isGroup = chat?.type === 'group' || chat?.type === 'supergroup';
   if (!text || !chatId) return NextResponse.json({ ok: true });
   const me = await playerByTg(db, update.message?.from?.id);
+  if (me) await markInbound(db, me.id);
   const reply = (t: string, kb?: { text: string; callback_data: string }[][]) =>
     tgApi('sendMessage', { chat_id: chatId, text: t.slice(0, 4000), parse_mode: 'HTML', ...(kb ? { reply_markup: { inline_keyboard: kb } } : {}) });
 

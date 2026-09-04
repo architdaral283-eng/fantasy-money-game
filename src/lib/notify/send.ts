@@ -22,9 +22,15 @@ async function log(db: SupabaseClient, playerId: string | null, channel: string,
 }
 
 /** Text to all linked chats (Telegram now; WhatsApp/Discord later behind the flag). */
-export async function fanOutText(db: SupabaseClient, templateKey: string, text: string, buttons?: { id: string; title: string }[]): Promise<void> {
+export async function fanOutText(db: SupabaseClient, templateKey: string, text: string, buttons?: { id: string; title: string }[], opts: { urgent?: boolean } = {}): Promise<void> {
+  const { inQuietHoursAt, nextDigestAt } = await import('@/lib/notify/quiet');
+  const quiet = !opts.urgent && inQuietHoursAt(new Date());
   const tg = telegram();
   for (const p of await linkedPlayers(db)) {
+    if (quiet) {
+      await db.from('message_queue').insert({ dest: `player:${p.id}`, template_key: templateKey, payload: { text }, not_before: nextDigestAt(new Date()).toISOString() });
+      continue;
+    }
     if (!p.telegram_chat_id || !tg) {
       await log(db, p.id, 'telegram', templateKey, { text }, 'SKIPPED', undefined, !tg ? 'no bot token' : 'player not linked');
       continue;
@@ -139,4 +145,30 @@ export async function sendHtml(chatId: string | number, text: string, keyboard?:
 export async function groupId(db: SupabaseClient): Promise<string | null> {
   const { data } = await db.from('config').select('value').eq('key', 'telegram_group_chat_id').single();
   return ((data?.value as { id?: string })?.id ?? null);
+}
+
+/** Zero-sum failure: loudest event. Red block to group + immediate Archit DM, any hour. */
+export async function zeroSumAlert(db: SupabaseClient, detail: string): Promise<void> {
+  const { sendGroup } = await import('@/lib/notify/quiet');
+  const tg = telegram();
+  const { data: archit } = await db.from('players').select('telegram_chat_id').eq('id', 'archit').single();
+  const chatId = (archit as { telegram_chat_id?: string } | null)?.telegram_chat_id;
+  if (tg && chatId) {
+    try {
+      const r = await tg.send(chatId, 'zero_sum_failure', { text: `Ledger locked. Balances do not sum to ₹0. ${detail}` });
+      await log(db, 'archit', 'telegram', 'zero_sum_failure', { detail }, 'SENT', r.messageId);
+    } catch (e) {
+      await log(db, 'archit', 'telegram', 'zero_sum_failure', { detail }, 'FAILED', undefined, (e as Error).message);
+    }
+  }
+  await sendGroup(db, `Ledger locked. Balances do not sum to ₹0. No further writes until it reconciles.`, { urgent: true });
+  await db.from('config').upsert({ key: 'ledger_locked', value: { at: new Date().toISOString(), detail } }, { onConflict: 'key' });
+}
+
+/** Clear the lock after a successful write. */
+export async function clearLedgerLock(db: SupabaseClient): Promise<boolean> {
+  const { data } = await db.from('config').select('value').eq('key', 'ledger_locked').single();
+  if (!data) return false;
+  await db.from('config').delete().eq('key', 'ledger_locked');
+  return true;
 }
