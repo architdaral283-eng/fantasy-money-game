@@ -97,67 +97,6 @@ export default function Commissioner() {
         <h4>Format examples</h4>
         <p className="sans">Arsenal 2-0 Manchester City - Premier League<br />Barcelona 4-0 Real Madrid - Copa del Rey<br />Inter 1-1 Juventus - Serie A<br />Bayern Munich 2-1 Dortmund - DFL-Supercup (needs Amendment II ratified)</p>
       </div>
-      <h3>Correct a recorded result</h3>
-      <p>Type the <strong>correct</strong> scoreline in the same format. First you see a preview (original vs corrected), then you confirm. The wrong row stays visible forever; a reversal plus the corrected row is appended.</p>
-      <CorrectionForm />
-      <h3>Open decisions for Archit (§17)</h3>
-      <ul className="sans">
-        <li>Largest Upset definition — provisional until confirmed</li>
-        <li>Public standings page — on or off (default off)</li>
-        <li>Reverse-fixture display warning — confirm</li>
-        <li>Round formats — confirm Copa del Rey SF two legs, Coppa Italia SF one leg</li>
-        <li>Backfill scope — confirm start date (default 21 Aug 2026)</li>
-      </ul>
-    </>
-  );
-}
-
-function CorrectionForm() {
-  const [line, setLine] = useState('Bayern Munich 2-1 Dortmund - DFL-Supercup');
-  const [msg, setMsg] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [ready, setReady] = useState(false);
-  const [done, setDone] = useState(false);
-
-  const call = async (preview: boolean) => {
-    setBusy(true); setMsg('');
-    try {
-      const res = await fetch('/api/corrections', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ line, preview, decidedBy: 'archit' }),
-      });
-      const j = await res.json();
-      if (!res.ok) { setMsg(`❌ ${j.error}`); setReady(false); setBusy(false); return; }
-      if (j.preview) {
-        setMsg(`Original: ${j.original.score} (${(j.original.rows as string[]).join('; ') || 'no money rows'}) → Corrected: ${j.corrected.score} — ${j.corrected.summary}`);
-        setReady(true);
-      } else {
-        setMsg(`✅ ${j.summary}`);
-        setReady(false);
-        setDone(true);
-      }
-    } catch { setMsg('❌ Could not reach the server — check connection and try again.'); }
-    setBusy(false);
-  };
-
-  if (done) {
-    return (
-      <>
-        <p className="sans">{msg}</p>
-        <p><button className="sans" onClick={() => { setDone(false); setMsg(''); setReady(false); }}>Correct another result</button></p>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <input className="sans" value={line} onChange={(e) => { setLine(e.target.value); setReady(false); }} style={{ width: '100%', padding: 8 }} />
-      <p>
-        <button className="sans" onClick={() => call(true)} disabled={busy}>1. Preview correction</button>
-        {' '}
-        {ready && <button className="sans" onClick={() => call(false)} disabled={busy}>2. Confirm correction</button>}
-      </p>
-      {msg && <p className="sans">{msg}</p>}
     </>
   );
 }
