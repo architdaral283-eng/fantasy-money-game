@@ -234,6 +234,15 @@ export async function POST(req: Request) {
     }
   }
   if (!me) {
+    // linking must precede the auth gate — otherwise nobody new can ever link.
+    if (/^link\s+/i.test(text)) {
+      if (isGroup) { await reply('Link from your DM with me, not the group.'); return NextResponse.json({ ok: true }); }
+      const m = text.toLowerCase().match(/^link\s+(archit|vedant|harshal|anmol)$/);
+      if (!m) { await reply('Send "link" plus your name. archit, vedant, harshal or anmol.'); return NextResponse.json({ ok: true }); }
+      await db.from('players').update({ telegram_chat_id: String(chatId), preferred_channel: 'telegram' }).eq('id', m[1]);
+      await reply(`Linked as ${m[1]}. Results, reminders and standings photos arrive here.`);
+      return NextResponse.json({ ok: true });
+    }
     await reply('This bot is private.');
     return NextResponse.json({ ok: true });
   }
@@ -245,14 +254,6 @@ export async function POST(req: Request) {
 
   if (cmdline === '/start') {
     await reply(`Record office bot. Link by name is already done for all four of you.\n\n${HELP_ALL}\n${me.role === 'COMMISSIONER' ? HELP_COMM : ''}`);
-    return NextResponse.json({ ok: true });
-  }
-  if (/^link\s+/i.test(text)) {
-    if (isGroup) { await reply('Link from your DM with me, not the group.'); return NextResponse.json({ ok: true }); }
-    const m = text.toLowerCase().match(/^link\s+(archit|vedant|harshal|anmol)$/);
-    if (!m) { await reply('Send "link" plus your name. archit, vedant, harshal or anmol.'); return NextResponse.json({ ok: true }); }
-    await db.from('players').update({ telegram_chat_id: String(chatId), preferred_channel: 'telegram' }).eq('id', m[1]);
-    await reply(`Linked as ${m[1]}. Results, reminders and standings photos arrive here.`);
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/help') {
