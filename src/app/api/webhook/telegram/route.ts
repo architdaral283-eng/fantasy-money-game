@@ -192,13 +192,18 @@ export async function POST(req: Request) {
       try {
         const r = await approveProposal(db, arg, 'archit');
         void r;
-        const { data: approval } = await db.from('pending_approvals').select('proposed_payload').eq('id', arg).single();
+        const { data: approval } = await db.from('pending_approvals').select('subject_type,subject_id,proposed_payload').eq('id', arg).single();
         const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string };
         const fixture = `${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}`;
         if (architChat && dmMid) await editText(architChat, dmMid, `APPROVED ${stamp} IST\n${fixture}`);
         // group silence rule: no result post. The pin edit below is the only
         // group-visible change on a fixture update.
         await refreshPin(db);
+        // roast auto-fire: ledger truth + authored line, quiet-aware
+        if ((approval as { subject_type?: string; subject_id?: string } | null)?.subject_type === 'FIXTURE') {
+          const roast = await fireRoast(db, (approval as { subject_id: string }).subject_id, false).catch(() => null);
+          if (roast) await sendGroup(db, roast);
+        }
         if (await clearLedgerLock(db)) await refreshPin(db);
         try {
           const pngRes = await fetch(`${APP_URL}/api/og/standings`);
@@ -266,7 +271,7 @@ export async function POST(req: Request) {
   const cmdline = text.split(' ')[0].replace(/@\w+$/, '');
   const rest = text.slice(cmdline.length).trim();
 
-  const HELP_ALL = `Commands: /standings /me /balance /next /last /trophies /stakes /swing /ifwins /bestcase /worstcase /scenarios /pool /streak /wooden /rewind /weekly /taunt /h2h /nemesis /club /ledger /awards /settle /correct /report /rules /help`;
+  const HELP_ALL = `Commands: /standings /me /balance /next /last /trophies /stakes /swing /exposure /streak /rewind /taunt /h2h /nemesis /club /ledger /awards /settle /correct /report /rules /help`;
   const HELP_COMM = `Commissioner: /pending /health /pin`;
 
   if (cmdline === '/start') {
@@ -385,7 +390,7 @@ export async function POST(req: Request) {
   }
 
   // ——— stakes, projections, social (pure arithmetic over the ledger) ———
-  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct'].includes(cmdline)) {
+  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct', '/roastadd', '/roastkill', '/roaststats'].includes(cmdline)) {
     await statsReply(db, reply, cmdline, rest, me.id, me.role);
     return NextResponse.json({ ok: true });
   }
@@ -408,6 +413,118 @@ export async function POST(req: Request) {
 
 function stripHtml(s: string): string {
   return s.replace(/<[^>]*>/g, '');
+}
+
+export const VALID_SLOTS = new Set([
+  'loser', 'winner', 'loser_club', 'winner_club', 'score', 'margin', 'amount',
+  'competition', 'loser_pick', 'winner_pick', 'h2h', 'loser_net', 'winner_net',
+  'owed', 'streak', 'marquee', 'manager', 'rank',
+]);
+
+/** Gather everything the roast engine needs for one recorded fixture. */
+async function roastContextFor(db: ReturnType<typeof supabaseService>, fixtureId: string, leadChange: boolean) {
+  const { buildContext } = await import('@/lib/roast/context');
+  const { activeLosingStreak } = await import('@/lib/stats/projections');
+  const [{ data: fx }, { data: res }, { data: clubs }, { data: players }, { data: bals }, { data: wld }, { data: led }, { data: dossiers }, { data: derbies }] = await Promise.all([
+    db.from('fixtures').select('id,competition_id,home_club_id,away_club_id').eq('id', fixtureId).single(),
+    db.from('results').select('h90,a90,terminal_status').eq('fixture_id', fixtureId).maybeSingle(),
+    db.from('clubs').select('id,name,league,owner_id,draft_pick'),
+    db.from('players').select('id,name'),
+    db.from('player_balances').select('id,net_inr'),
+    db.from('wld_records').select('player_id,fixture_id,outcome,occurred_at'),
+    db.from('ledger_entries').select('fixture_id,from_player_id,to_player_id,amount_inr'),
+    db.from('club_dossiers').select('*'),
+    db.from('derbies').select('*'),
+  ]);
+  if (!fx || !res) return null;
+  const F = fx as { competition_id: string; home_club_id: string; away_club_id: string };
+  const R = res as { h90: number; a90: number; terminal_status: string };
+  const cmap = new Map(((clubs ?? []) as { id: string; name: string; league: string; owner_id: string; draft_pick: number }[]).map((c) => [c.id, c]));
+  const pmap = new Map(((players ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
+  const nets: Record<string, number> = {};
+  for (const b of (bals ?? []) as { id: string; net_inr: number }[]) nets[b.id] = Number(b.net_inr);
+  const home = cmap.get(F.home_club_id);
+  const away = cmap.get(F.away_club_id);
+  if (!home || !away) return null;
+  const homeWon = R.h90 > R.a90;
+  const loserId = homeWon ? away.owner_id : home.owner_id;
+  const evts = ((wld ?? []) as { player_id: string; outcome: 'W' | 'L' | 'D'; occurred_at: string }[]).map((w) => ({ player: w.player_id, outcome: w.outcome, at: w.occurred_at }));
+  // h2h + owed between the two owners across all recorded meetings
+  const pair = new Set([home.owner_id, away.owner_id]);
+  const ownersOf = (hid: string, aid: string) => new Set([(cmap.get(hid)?.owner_id), (cmap.get(aid)?.owner_id)]);
+  void ownersOf;
+  let aw = 0, bw = 0, owed = 0;
+  const { data: allFx } = await db.from('fixtures').select('id,home_club_id,away_club_id').eq('status', 'RECORDED');
+  const wldAll = ((wld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[]);
+  const ledAll = ((led ?? []) as { fixture_id?: string | null; from_player_id: string; to_player_id: string; amount_inr: number }[]);
+  const [oA, oB] = [...pair];
+  for (const f of (allFx ?? []) as { id: string; home_club_id: string; away_club_id: string }[]) {
+    const op = new Set([cmap.get(f.home_club_id)?.owner_id, cmap.get(f.away_club_id)?.owner_id]);
+    if (!(op.has(oA) && op.has(oB))) continue;
+    const rows = wldAll.filter((w) => w.fixture_id === f.id);
+    const aWon = rows.some((w) => w.player_id === oA && w.outcome === 'W');
+    const bWon = rows.some((w) => w.player_id === oB && w.outcome === 'W');
+    if (aWon && !bWon) aw++;
+    else if (bWon && !aWon) bw++;
+    for (const e of ledAll.filter((x) => x.fixture_id === f.id)) {
+      owed += (e.to_player_id === oA ? e.amount_inr : 0) - (e.from_player_id === oA ? e.amount_inr : 0);
+    }
+  }
+  const h2h = aw === bw ? { aWins: aw, bWins: bw, leader: null as string | null } : { aWins: aw, bWins: bw, leader: aw > bw ? pmap.get(oA) ?? oA : pmap.get(oB) ?? oB };
+  const delta: Record<string, number> = {};
+  for (const e of ledAll.filter((x) => x.fixture_id === fixtureId)) {
+    delta[e.to_player_id] = (delta[e.to_player_id] ?? 0) + e.amount_inr;
+    delta[e.from_player_id] = (delta[e.from_player_id] ?? 0) - e.amount_inr;
+  }
+  const derby = ((derbies ?? []) as { id: string; club_a_id: string; club_b_id: string }[]).find((d) =>
+    (d.club_a_id === F.home_club_id && d.club_b_id === F.away_club_id) || (d.club_a_id === F.away_club_id && d.club_b_id === F.home_club_id));
+  const doss = ((dossiers ?? []) as { club_id: string; marquee: string; manager: string }[]).find((x) => x.club_id === (homeWon ? away.id : home.id));
+  const order = ['archit', 'vedant', 'harshal', 'anmol'].sort((a, b) => (nets[b] ?? 0) - (nets[a] ?? 0));
+  const { data: comp } = await db.from('competitions').select('name').eq('id', F.competition_id).single();
+  const ctx = buildContext({
+    homeClub: { id: home.id, name: home.name, pick: home.draft_pick, owner: home.owner_id, ownerName: pmap.get(home.owner_id) ?? home.owner_id, league: home.league },
+    awayClub: { id: away.id, name: away.name, pick: away.draft_pick, owner: away.owner_id, ownerName: pmap.get(away.owner_id) ?? away.owner_id, league: away.league },
+    homeGoals: R.h90, awayGoals: R.a90,
+    competition: (comp as { name?: string } | null)?.name ?? F.competition_id,
+    amount: Math.abs(delta[homeWon ? home.owner_id : away.owner_id] ?? 500),
+    derbyId: derby?.id ?? null,
+    dossier: { marquee: doss?.marquee ?? 'the marquee signing', manager: doss?.manager ?? 'the manager' },
+    nets, fixtureDelta: delta, h2h,
+    owed: Math.abs(owed),
+    streakLosses: activeLosingStreak(evts, loserId),
+    rankOfLoser: order.indexOf(loserId) + 1,
+    isShootout: R.terminal_status === 'PEN',
+    isLeadChange: leadChange,
+  });
+  return { ctx, loserId };
+}
+
+/** Fire one roast for a fixture: select, render, log. Reroll reuses context, new line. */
+async function fireRoast(db: ReturnType<typeof supabaseService>, fixtureId: string, reroll: boolean): Promise<string | null> {
+  const { pickTemplate, renderBody, statPrefix } = await import('@/lib/roast/select');
+  const built = await roastContextFor(db, fixtureId, false);
+  if (!built) return null;
+  const { data: tpl } = await db.from('roast_templates').select('*').eq('retired', false);
+  const templates = ((tpl ?? []) as import('@/lib/roast/select').RoastTemplate[]);
+  const { data: evts } = await db.from('roast_events').select('*').eq('fixture_id', fixtureId).order('posted_at', { ascending: false }).limit(1);
+  const latest = ((evts ?? []) as { id: number; template_ids: number[]; posted_at: string; reroll_count: number }[])[0];
+  let exclude: number[] = [];
+  let eventId: number | null = null;
+  if (reroll && latest && Date.now() - Date.parse(latest.posted_at) < 24 * 3600 * 1000 && latest.reroll_count < 3) {
+    exclude = latest.template_ids;
+    eventId = latest.id;
+  }
+  const pool = templates.filter((t) => !exclude.includes(t.id));
+  const pick = pickTemplate(pool.length ? pool : templates, built.ctx, Date.now());
+  if (!pick) return statPrefix(built.ctx);
+  await db.from('roast_templates').update({ use_count: pick.use_count + 1, last_used_at: new Date().toISOString() }).eq('id', pick.id);
+  const text = `${statPrefix(built.ctx)}\n\n${renderBody(pick.body, built.ctx)}\n\n#${pick.id}`;
+  if (eventId) {
+    await db.from('roast_events').update({ template_ids: [...exclude, pick.id], reroll_count: latest.reroll_count + 1 }).eq('id', eventId);
+  } else {
+    await db.from('roast_events').insert({ fixture_id: fixtureId, template_ids: [pick.id], rendered_text: text.slice(0, 2000) });
+  }
+  return text;
 }
 
 async function statsReply(
@@ -473,24 +590,68 @@ async function statsReply(
     return;
   }
   if (cmd === '/taunt') {
-    const who = rest.toLowerCase() || callerId;
-    const pid = ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || nameOf(p).toLowerCase() === who) ?? callerId;
-    // net position is the only honest "down" figure: reversals and duplicate
-    // pairs net to zero instead of inflating a gross sum.
-    const net = bals.get(pid)?.net ?? 0;
-    const gross = net < 0 ? -net : 0;
-    const realRows = ((ledger ?? []) as { from_player_id: string; amount_inr: number; description: string }[])
-      .filter((r) => r.from_player_id === pid && !r.description.startsWith('REVERSAL'));
-    const biggest = realRows.reduce((m, r) => Math.max(m, r.amount_inr), 0);
-    const cutoff = Date.now() - 7 * 864e5;
-    const l7 = evts.filter((e) => e.player === pid && Date.parse(e.at) >= cutoff);
-    const facts = {
-      grossLost: gross,
-      streak: activeLosingStreak(evts, pid),
-      biggestSingleLoss: biggest,
-      last7: { w: l7.filter((e) => e.outcome === 'W').length, l: l7.filter((e) => e.outcome === 'L').length },
-    };
-    await reply(pickTaunt(nameOf(pid), facts, ' this season'));
+    const who = rest.toLowerCase();
+    const pid = who ? ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || nameOf(p).toLowerCase() === who) : undefined;
+    if (who && !pid) { await reply('Name one of the four.'); return; }
+    const { data: rec } = await db.from('fixtures').select('id,home_club_id,away_club_id').eq('status', 'RECORDED');
+    const { data: allClubs } = await db.from('clubs').select('id,owner_id');
+    const omap = new Map(((allClubs ?? []) as { id: string; owner_id: string }[]).map((c) => [c.id, c.owner_id]));
+    const pool = ((rec ?? []) as { id: string; home_club_id: string; away_club_id: string }[])
+      .filter((f) => !pid || omap.get(f.home_club_id) === pid || omap.get(f.away_club_id) === pid);
+    if (!pool.length) { await reply(pid ? `${nameOf(pid)} has no counted fixtures yet.` : 'Nothing recorded yet.'); return; }
+    // most recent = last in seed order is unreliable; use roast_events recency else first candidate
+    const { data: evts } = await db.from('roast_events').select('fixture_id,posted_at').order('posted_at', { ascending: false }).limit(1);
+    const latestEv = ((evts ?? []) as { fixture_id: string }[])[0];
+    const target = (latestEv && pool.some((f) => f.id === latestEv.fixture_id) && !pid) ? latestEv.fixture_id : pool[pool.length - 1].id;
+    const text = await fireRoast(db, target, !pid);
+    if (!text) { await reply('The room is quiet. No roast today.'); return; }
+    if (!pid) { await reply(text); return; }
+    // named roast: latest fixture roast + overall standings + club choice
+    const [{ data: b2 }, { data: mine2 }] = await Promise.all([
+      db.from('player_balances').select('id,name,net_inr'),
+      db.from('clubs').select('name,league').eq('owner_id', pid),
+    ]);
+    const table = ((b2 ?? []) as { id: string; name: string; net_inr: number }[])
+      .sort((x, y) => Number(y.net_inr) - Number(x.net_inr))
+      .map((r, i) => `${i + 1}. ${r.name} ${Number(r.net_inr) >= 0 ? '+' : '−'}₹${Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}`).join('\n');
+    const clubsLine = ((mine2 ?? []) as { name: string; league: string }[]).map((c) => `${c.name} (${c.league})`).join(', ');
+    await reply(`${text}\n\nStandings:\n${table}\n\nDraft: ${clubsLine}`);
+    return;
+  }
+  if (cmd === '/roastadd') {
+    const m = rest.match(/^(\S+)\s+([\s\S]+)$/);
+    if (!m) { await reply('Send "/roastadd" plus club plus text. /roastadd arsenal Your text with {slots}'); return; }
+    const { resolveClub } = await import('@/lib/parse/one-line');
+    const cid = resolveClub(m[1]);
+    if (!cid) { await reply(`Unknown club "${m[1]}".`); return; }
+    const slots = [...m[2].matchAll(/\{(\w+)\}/g)].map((x) => x[1]);
+    const bad = slots.filter((s) => !VALID_SLOTS.has(s));
+    if (bad.length) { await reply(`Unknown slots: ${bad.join(', ')}. Valid: ${[...VALID_SLOTS].join(', ')}`); return; }
+    const { data: blocked } = await db.from('blocked_terms').select('term');
+    const hit = ((blocked ?? []) as { term: string }[]).find((b) => m[2].toLowerCase().includes(b.term.toLowerCase()));
+    if (hit) { await reply('That line trips a content boundary. Killed on sight, no appeal.'); return; }
+    const { data: ins } = await db.from('roast_templates').insert({
+      body: m[2].slice(0, 600), target: 'LOSER', scope: 'CLUB', club_id: cid,
+      conditions: {}, severity: 2, weight: 15, author_player_id: callerId,
+    }).select('id').single();
+    await reply(ins ? `Line banked as #${(ins as { id: number }).id}. It fires with a 1.5x bonus.` : 'Could not bank that line.');
+    return;
+  }
+  if (cmd === '/roastkill') {
+    const id = parseInt(rest, 10);
+    if (!id) { await reply('Send "/roastkill" plus the line number shown under the roast.'); return; }
+    const { data: done } = await db.from('roast_templates').update({ retired: true }).eq('id', id).select('id');
+    await reply(done && (done as unknown[]).length ? `Line #${id} retired. Effective immediately, no ceremony.` : `No line #${id}.`);
+    return;
+  }
+  if (cmd === '/roaststats') {
+    const { data: all } = await db.from('roast_templates').select('id,club_id,use_count,retired').eq('retired', false);
+    const rows = ((all ?? []) as { id: number; club_id: string | null; use_count: number }[]);
+    const per = new Map<string, number>();
+    for (const r of rows) per.set(r.club_id ?? 'meta', (per.get(r.club_id ?? 'meta') ?? 0) + 1);
+    const thin = [...per.entries()].filter(([, n]) => n < 5).map(([c]) => c);
+    const top = [...rows].sort((a, b) => b.use_count - a.use_count).slice(0, 3).map((r) => `#${r.id} x${r.use_count}`).join(', ');
+    await reply(`Corpus: ${rows.length} live lines. Most used: ${top || 'none yet'}. Thin pools (under 5): ${thin.join(', ') || 'none'}.`);
     return;
   }
   if (cmd === '/h2h') {
