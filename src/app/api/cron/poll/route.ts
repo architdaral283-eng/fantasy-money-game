@@ -308,5 +308,24 @@ export async function POST(req: Request) {
   // release anything queued through quiet hours or the daily ceiling
   const drained = await drainQueue(db).catch(() => ({ released: 0 }));
 
-  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released });
+  // 30-minute pre-match group warning — time-sensitive by definition, always immediate
+  const { data: soon } = await db.from('fixtures').select('id,competition_id,home_club_id,away_club_id,kickoff_utc')
+    .eq('status', 'SCHEDULED').is('pre_match_sent_at', null)
+    .gt('kickoff_utc', new Date(nowMs).toISOString())
+    .lte('kickoff_utc', new Date(nowMs + 35 * 60 * 1000).toISOString());
+  let prematch = 0;
+  if ((soon ?? []).length) {
+    const { sendGroup } = await import('@/lib/notify/quiet');
+    const { data: clubs } = await db.from('clubs').select('id,name,owner_id');
+    const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
+    for (const f of (soon ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string }[]) {
+      const h = cmap.get(f.home_club_id);
+      const a = cmap.get(f.away_club_id);
+      await sendGroup(db, `${h?.name ?? f.home_club_id} v ${a?.name ?? f.away_club_id} kicks off in 30 minutes (${f.competition_id}). ${h?.owner_id ?? '?'} v ${a?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`, { urgent: true });
+      await db.from('fixtures').update({ pre_match_sent_at: new Date().toISOString() }).eq('id', f.id);
+      prematch++;
+    }
+  }
+
+  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch });
 }
