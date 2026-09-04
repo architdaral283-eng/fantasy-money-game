@@ -45,8 +45,8 @@ async function handle(req: Request) {
     const { data: target } = await db.from('ledger_entries').select('*').eq('id', entryId).single() as {
       data: { id: number; description: string; from_player_id: string; to_player_id: string; amount_inr: number; event_type: string; fixture_id: string | null; is_correction: boolean } | null;
     };
-    if (!target || !target.is_correction || !target.description.startsWith('CORRECTION:')) {
-      return NextResponse.json({ error: 'Only a CORRECTION row can be deduped.' }, { status: 422 });
+    if (!target || !target.is_correction) {
+      return NextResponse.json({ error: 'Only a correction-protocol row (REVERSAL/CORRECTION) can be deduped.' }, { status: 422 });
     }
     const { data: already } = await db.from('ledger_entries').select('id').eq('corrects_entry_id', entryId).ilike('description', 'REVERSAL of duplicate%');
     if ((already ?? []).length > 0) {
