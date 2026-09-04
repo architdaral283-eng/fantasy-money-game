@@ -32,8 +32,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <header className="masthead">
           <div className="wrap">
-            <h1>The Record Book</h1>
-            <p className="season">Fantasy Football Money Game, Season 2026/27</p>
+            <div className="brandrow">
+              <img src="/logo.png" alt="Fantasy Football Money Game mark" className="brandmark" width={64} height={64} />
+              <div>
+                <h1>The Record Book</h1>
+                <p className="season">Fantasy Football Money Game, Season 2026/27</p>
+              </div>
+            </div>
             <nav>
               {NAV.map(([href, label]) => (
                 <a key={href} href={href}>{label}</a>

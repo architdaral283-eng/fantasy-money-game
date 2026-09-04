@@ -28,7 +28,9 @@ body {
 .wrap { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
 
 /* masthead */
-.masthead { border-bottom: 1px solid var(--line); padding: 40px 0 0; }
+.masthead { border-bottom: 1px solid var(--line); padding: 32px 0 0; }
+.brandrow { display: flex; align-items: center; gap: 20px; }
+.brandmark { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; border: 2px solid var(--line); flex-shrink: 0; }
 .masthead h1 {
   font-family: "Archivo", sans-serif;
   font-stretch: 118%;
