@@ -122,7 +122,7 @@ export async function answerCallback(id: string, text?: string, alert = false): 
 }
 
 /** Edit a bot message in place (approval outcome, pin refresh). Skips identical content. */
-export async function editText(chatId: string | number, messageId: number, text: string, keyboard?: { text: string; callback_data: string }[][]): Promise<boolean> {
+export async function editText(chatId: string | number, messageId: number, text: string, keyboard?: { text: string; callback_data?: string; url?: string }[][]): Promise<boolean> {
   const r = await botCall('editMessageText', {
     chat_id: chatId, message_id: messageId, text: text.slice(0, 4000), parse_mode: 'HTML',
     ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
@@ -134,7 +134,7 @@ export async function pinMessage(chatId: string | number, messageId: number): Pr
   await botCall('pinChatMessage', { chat_id: chatId, message_id: messageId, disable_notification: true });
 }
 
-export async function sendHtml(chatId: string | number, text: string, keyboard?: { text: string; callback_data: string }[][]): Promise<number | null> {
+export async function sendHtml(chatId: string | number, text: string, keyboard?: { text: string; callback_data?: string; url?: string }[][]): Promise<number | null> {
   const r = await botCall('sendMessage', {
     chat_id: chatId, text: text.slice(0, 4000), parse_mode: 'HTML',
     ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),

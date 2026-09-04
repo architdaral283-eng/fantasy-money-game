@@ -30,13 +30,13 @@ function istTime(): string {
 const PIN_KEYS: Record<string, string> = {
   fixtures: 'p:fixtures', h2h: 'p:h2h', trophies: 'p:trophies', back: 'p:back',
 };
-function pinKeyboard(): { text: string; callback_data: string }[][] {
+function pinKeyboard(): { text: string; callback_data?: string; url?: string }[][] {
   return [[
     { text: 'Fixtures', callback_data: PIN_KEYS.fixtures },
     { text: 'Head to head', callback_data: PIN_KEYS.h2h },
   ], [
     { text: 'Trophies', callback_data: PIN_KEYS.trophies },
-    { text: 'Open site', callback_data: 'p:site' },
+    { text: 'Open site', url: APP_URL },
   ]];
 }
 function backKeyboard(): { text: string; callback_data: string }[][] {
@@ -167,8 +167,6 @@ export async function POST(req: Request) {
         const list = ((tr ?? []) as { competition_id: string; status: string }[])
           .map((t) => `${cmap.get(t.competition_id)?.name ?? t.competition_id}: ${t.status}`).join('\n');
         await editText(chatId, mid, `Trophies\n\n<pre>${list}</pre>\n\nPool ₹24,000.`, backKeyboard());
-      } else if (arg === 'site') {
-        await finish(APP_URL);
       } else if (arg === 'h2h') {
         await editText(chatId, mid, `Head to head lives on the site:\n${APP_URL}/h2h`, backKeyboard());
       }
@@ -233,7 +231,7 @@ export async function POST(req: Request) {
   if (isGroup && !text.startsWith('/')) return NextResponse.json({ ok: true });
   const me = await playerByTg(db, update.message?.from?.id);
   if (me) await markInbound(db, me.id);
-  const reply = (t: string, kb?: { text: string; callback_data: string }[][]) =>
+  const reply = (t: string, kb?: { text: string; callback_data?: string; url?: string }[][]) =>
     tgApi('sendMessage', { chat_id: chatId, text: t.slice(0, 4000), parse_mode: 'HTML', ...(kb ? { reply_markup: { inline_keyboard: kb } } : {}) });
 
   // group registration / leave
@@ -387,7 +385,7 @@ export async function POST(req: Request) {
   }
 
   // ——— stakes, projections, social (pure arithmetic over the ledger) ———
-  if (['/stakes', '/exposure', '/swing', '/ifwins', '/bestcase', '/worstcase', '/scenarios', '/pool', '/streak', '/wooden', '/rewind', '/taunt', '/weekly', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct'].includes(cmdline)) {
+  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct'].includes(cmdline)) {
     await statsReply(db, reply, cmdline, rest, me.id, me.role);
     return NextResponse.json({ ok: true });
   }
@@ -448,7 +446,7 @@ async function statsReply(
     await reply(week.length ? `${week.length} counted fixtures in the next 7 days.\n₹${s.base.toLocaleString('en-IN')} in play. ₹${s.ifBig.toLocaleString('en-IN')} if all go big.` : 'Nothing counted in the next 7 days.');
     return;
   }
-  if (cmd === '/exposure' || cmd === '/bestcase' || cmd === '/worstcase') {
+  if (cmd === '/exposure') {
     const who = rest.toLowerCase() || callerId;
     const pid = ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || nameOf(p).toLowerCase() === who) ?? callerId;
     const mine = ((clubs ?? []) as { owner_id: string; in_ucl: boolean }[]).filter((c) => c.owner_id === pid);
@@ -456,9 +454,7 @@ async function statsReply(
     const win = liveT.filter((t) => t.code !== 'UCL' || hasUcl).map((t) => t.winnerPrize);
     const lose = liveT.map((t) => t.eachOtherPays);
     const { best, worst } = ceilingFloor(bals.get(pid)?.net ?? 0, remaining.length, win, lose);
-    await reply(cmd === '/exposure'
-      ? `${nameOf(pid)}: ceiling ${inr(best)}, floor ${inr(worst)}, across ${remaining.length} fixtures and ${liveT.length} live trophies. Arithmetic, not prediction.`
-      : cmd === '/bestcase' ? `${nameOf(pid)} best case: ${inr(best)}. Every fixture a thrashing, every reachable trophy taken.` : `${nameOf(pid)} worst case: ${inr(worst)}. Every fixture lost big, every trophy to someone else.`);
+    await reply(`${nameOf(pid)}: ceiling ${inr(best)}, floor ${inr(worst)}, across ${remaining.length} fixtures and ${liveT.length} live trophies. Arithmetic, not prediction.`);
     return;
   }
   if (cmd === '/swing') {
@@ -466,59 +462,26 @@ async function statsReply(
     await reply(`Biggest swing left: ${s.label}, ₹${s.swing.toLocaleString('en-IN')}.`);
     return;
   }
-  if (cmd === '/ifwins') {
-    const cid = resolveClub(rest);
-    if (!cid) { await reply('Name a club. Yours, ideally.'); return; }
-    const club = ((clubs ?? []) as { id: string; name: string; league: string; owner_id: string; in_ucl: boolean }[]).find((c) => c.id === cid);
-    if (!club) { await reply('No such club.'); return; }
-    const leagueComp = ((comps ?? []) as { name: string; trophy_winner_prize: number; trophy_each_other_pays: number }[]).find((c) => c.name === club.league);
-    if (!leagueComp) { await reply('No such competition.'); return; }
-    const lines = ['archit', 'vedant', 'harshal', 'anmol'].map((p) => {
-      const v = (bals.get(p)?.net ?? 0) + (p === club.owner_id ? leagueComp.trophy_winner_prize : -leagueComp.trophy_each_other_pays);
-      return `${nameOf(p)}: ${inr(v)}`;
-    });
-    await reply(`If ${club.name} take the ${club.league}:\n${lines.join('\n')}`);
+  if (cmd === '/streak') {
+    await reply(['archit', 'vedant', 'harshal', 'anmol'].map((p) => `${nameOf(p)}: ${formString(evts, p)}`).join('\n'));
     return;
   }
-  if (cmd === '/scenarios') {
-    const byLeague = new Map<string, string[]>();
-    for (const c of (clubs ?? []) as { name: string; league: string; owner_id: string }[]) {
-      const list = byLeague.get(c.league) ?? [];
-      list.push(`${c.name} (${nameOf(c.owner_id)})`);
-      byLeague.set(c.league, list);
-    }
-    await reply(`Title races. Who benefits:\n\n${[...byLeague.entries()].map(([l, cs]) => `${l}: ${cs.join(', ')}`).join('\n')}`);
-    return;
-  }
-  if (cmd === '/pool') {
-    const decided = 24000 - liveT.reduce((s, t) => s + t.winnerPrize, 0);
-    await reply(`Pool ₹24,000. Live: ${liveT.length} trophies (₹${liveT.reduce((s, t) => s + t.winnerPrize, 0).toLocaleString('en-IN')}). Decided or gone: ₹${decided.toLocaleString('en-IN')}.`);
-    return;
-  }
-  if (cmd === '/streak' || cmd === '/wooden') {
-    if (cmd === '/streak') {
-      await reply(['archit', 'vedant', 'harshal', 'anmol'].map((p) => `${nameOf(p)}: ${formString(evts, p)}`).join('\n'));
-    } else {
-      const order = ['archit', 'vedant', 'harshal', 'anmol'].sort((a, b) => (bals.get(a)?.net ?? 0) - (bals.get(b)?.net ?? 0));
-      const last = order[order.length - 1];
-      const gap = (bals.get(order[order.length - 2])?.net ?? 0) - (bals.get(last)?.net ?? 0);
-      await reply(`Spoon: ${nameOf(last)} at ${inr(bals.get(last)?.net ?? 0)}, ₹${gap.toLocaleString('en-IN')} behind.`);
-    }
-    return;
-  }
-  if (cmd === '/rewind' || cmd === '/weekly') {
+  if (cmd === '/rewind') {
     const since = Date.now() - 7 * 864e5;
     const rows = ((ledger ?? []) as { description: string; from_player_id: string; to_player_id: string; amount_inr: number; created_at: string }[]).filter((r) => Date.parse(r.created_at) >= since);
-    const head = cmd === '/weekly' ? `Week in review. ${rows.length} entries.\n\n` : '';
-    await reply(head + (rows.map((r) => `${r.description}: ₹${r.amount_inr} ${r.from_player_id} to ${r.to_player_id}`).join('\n') || 'Quiet week. Nothing written.'));
+    await reply(rows.map((r) => `${r.description}: ₹${r.amount_inr} ${r.from_player_id} to ${r.to_player_id}`).join('\n') || 'Quiet week. Nothing written.');
     return;
   }
   if (cmd === '/taunt') {
     const who = rest.toLowerCase() || callerId;
     const pid = ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || nameOf(p).toLowerCase() === who) ?? callerId;
-    const debits = ((ledger ?? []) as { from_player_id: string; amount_inr: number; created_at: string }[]).filter((r) => r.from_player_id === pid);
-    const gross = debits.reduce((s, r) => s + r.amount_inr, 0);
-    const biggest = debits.reduce((m, r) => Math.max(m, r.amount_inr), 0);
+    // net position is the only honest "down" figure: reversals and duplicate
+    // pairs net to zero instead of inflating a gross sum.
+    const net = bals.get(pid)?.net ?? 0;
+    const gross = net < 0 ? -net : 0;
+    const realRows = ((ledger ?? []) as { from_player_id: string; amount_inr: number; description: string }[])
+      .filter((r) => r.from_player_id === pid && !r.description.startsWith('REVERSAL'));
+    const biggest = realRows.reduce((m, r) => Math.max(m, r.amount_inr), 0);
     const cutoff = Date.now() - 7 * 864e5;
     const l7 = evts.filter((e) => e.player === pid && Date.parse(e.at) >= cutoff);
     const facts = {
