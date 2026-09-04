@@ -619,6 +619,7 @@ async function statsReply(
     return;
   }
   if (cmd === '/roastadd') {
+    if (isGroup) { await reply('That one lives in DM. Message me directly.'); return; }
     const m = rest.match(/^(\S+)\s+([\s\S]+)$/);
     if (!m) { await reply('Send "/roastadd" plus club plus text. /roastadd arsenal Your text with {slots}'); return; }
     const { resolveClub } = await import('@/lib/parse/one-line');
@@ -638,6 +639,7 @@ async function statsReply(
     return;
   }
   if (cmd === '/roastkill') {
+    if (isGroup) { await reply('That one lives in DM. Message me directly.'); return; }
     const id = parseInt(rest, 10);
     if (!id) { await reply('Send "/roastkill" plus the line number shown under the roast.'); return; }
     const { data: done } = await db.from('roast_templates').update({ retired: true }).eq('id', id).select('id');
