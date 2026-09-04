@@ -23,24 +23,24 @@ export async function GET() {
 
   return new ImageResponse(
     (
-      <div style={{ display: 'flex', flexDirection: 'column', width: 900, padding: 48, background: '#ffffff', fontFamily: 'Georgia, serif' }}>
-        <div style={{ fontSize: 22, letterSpacing: 4, color: '#5b6b7a' }}>FANTASY FOOTBALL MONEY GAME · 2026/27</div>
-        <div style={{ fontSize: 56, fontWeight: 700, margin: '8px 0 24px' }}>Standings</div>
+      <div style={{ display: 'flex', flexDirection: 'column', width: 900, padding: 48, background: '#F1F4EF', fontFamily: 'Archivo, sans-serif', color: '#10281B' }}>
+        <div style={{ fontSize: 20, letterSpacing: 3, color: '#6B7A6E' }}>FANTASY FOOTBALL MONEY GAME 2026/27</div>
+        <div style={{ fontSize: 54, fontWeight: 800, margin: '8px 0 24px', letterSpacing: -1 }}>Standings</div>
         {rows.map((r, i) => (
-          <div key={r.id} style={{ display: 'flex', fontSize: 34, padding: '14px 0', borderBottom: '2px solid #dfe7ee' }}>
+          <div key={r.id} style={{ display: 'flex', fontSize: 32, padding: '14px 0', borderBottom: '2px solid #DCE2D8', background: i % 2 ? '#F1F4EF' : '#FFFFFF' }}>
             <div style={{ width: 60 }}>{i + 1}</div>
             <div style={{ width: 300 }}>{r.name}</div>
-            <div style={{ width: 220, color: Number(r.net_inr) >= 0 ? '#0f7a4d' : '#b3372f' }}>
-              ₹{Number(r.net_inr).toLocaleString('en-IN')}
+            <div style={{ width: 220, color: Number(r.net_inr) >= 0 ? '#10281B' : '#C8102E', fontWeight: 600 }}>
+              {Number(r.net_inr) >= 0 ? '+' : '−'}₹{Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}
             </div>
-            <div style={{ color: '#5b6b7a' }}>{r.w}W · {r.l}L · {r.d}D</div>
+            <div style={{ color: '#6B7A6E' }}>{r.w}W {r.l}L {r.d}D</div>
           </div>
         ))}
-        <div style={{ marginTop: 28, fontSize: 26, background: '#14202b', color: '#fff', padding: '12px 20px', alignSelf: 'flex-start' }}>
-          Zero-sum check: ₹{total} {total === 0 ? '✓' : '✗ ALERT'}
+        <div style={{ marginTop: 28, fontSize: 24, background: '#10281B', color: '#F1F4EF', padding: '12px 20px', alignSelf: 'flex-start' }}>
+          Zero-sum check: ₹{total} {total === 0 ? 'passed' : 'FAILED. Ledger locked.'}
         </div>
       </div>
     ),
-    { width: 900, height: 200 + rows.length * 70 + 180 },
+    { width: 900, height: 220 + rows.length * 70 + 180 },
   );
 }

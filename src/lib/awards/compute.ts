@@ -1,4 +1,4 @@
-// Awards (live, never hand-entered — §12) + settlement (§/settle).
+// Awards (live, never hand-entered — §12) + minimum-transaction settlement.
 export interface LedgerRow {
   to_player_id: string; from_player_id: string; amount_inr: number; event_type: 'MATCH' | 'TROPHY' | 'CORRECTION';
 }

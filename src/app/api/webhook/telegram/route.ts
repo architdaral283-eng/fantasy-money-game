@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { approveProposal } from '@/lib/ledger/writer';
-import { fanOutPhoto, fanOutText } from '@/lib/notify/send';
+import { fanOutPhoto, fanOutText, notifyArchitApproval } from '@/lib/notify/send';
 import { parseCommand, parseOneLine } from '@/lib/parse/one-line';
+import { submitManualLine } from '@/lib/entry/submit';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app';
 
@@ -55,7 +56,7 @@ export async function POST(req: Request) {
         const { data: approval } = await db.from('pending_approvals').select('proposed_payload').eq('id', approvalId).single();
         const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string };
         await fanOutPhoto(db, 'result_recorded',
-          `✅ Recorded: ${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''} — standings attached.`,
+          `Recorded. ${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}. Standings attached.`,
           async () => png);
       } catch (e) {
         await tgApi('answerCallbackQuery', { callback_query_id: update.callback_query.id, text: `Failed: ${(e as Error).message}`, show_alert: true });
@@ -96,10 +97,16 @@ export async function POST(req: Request) {
   }
   const parsed = parseOneLine(text);
   if ('error' in parsed) {
-    await reply(`${parsed.error}\n\nOr send "standings".`);
+    await reply(`${parsed.error} Send "standings" to read the table.`);
     return NextResponse.json({ ok: true });
   }
-  await reply('Got it — sent to Archit for approval. Nothing writes without his tap.');
-  // TODO: picks up the manual-entry pipeline (creates PENDING) — wired next.
+  // player-reported score: becomes a PENDING proposal like any other. Archit still taps.
+  const r = await submitManualLine(db, text, 'telegram');
+  if (!r.ok) {
+    await reply(r.error);
+    return NextResponse.json({ ok: true });
+  }
+  await reply(`Proposal ready. ${r.summary} Waiting on Archit.`);
+  await notifyArchitApproval(db, r.approvalId, `Report: ${text}\n${r.summary}`);
   return NextResponse.json({ ok: true });
 }

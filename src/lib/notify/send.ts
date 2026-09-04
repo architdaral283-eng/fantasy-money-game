@@ -57,6 +57,30 @@ export async function fanOutPhoto(db: SupabaseClient, templateKey: string, capti
   }
 }
 
+/** One-tap approval request to Archit only, with inline Approve/Reject buttons. */
+export async function notifyArchitApproval(db: SupabaseClient, approvalId: string, text: string): Promise<void> {
+  const tg = telegram();
+  const { data: archit } = await db.from('players').select('id,telegram_chat_id').eq('id', 'archit').single();
+  const chatId = (archit as { telegram_chat_id?: string } | null)?.telegram_chat_id;
+  if (!tg || !chatId) {
+    await log(db, 'archit', 'telegram', 'result_approval_request', { text }, 'SKIPPED', undefined, !tg ? 'no bot token' : 'archit not linked');
+    return;
+  }
+  try {
+    const sent = await tg.send(chatId, 'result_approval_request', {
+      text,
+      buttons: [
+        { id: `approve:${approvalId}`, title: 'Approve' },
+        { id: `reject:${approvalId}`, title: 'Reject' },
+      ],
+    });
+    await db.from('pending_approvals').update({ provider_message_id: sent.messageId }).eq('id', approvalId);
+    await log(db, 'archit', 'telegram', 'result_approval_request', { text }, 'SENT', sent.messageId);
+  } catch (e) {
+    await log(db, 'archit', 'telegram', 'result_approval_request', { text }, 'FAILED', undefined, (e as Error).message);
+  }
+}
+
 /** Pure: which scheduled fixtures need a 24h reminder right now. */
 export function dueReminders(
   fixtures: { id: string; status: string; kickoff_utc: string | null; reminder_sent_at: string | null }[],

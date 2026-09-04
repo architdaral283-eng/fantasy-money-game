@@ -214,7 +214,7 @@ export async function POST(req: Request) {
   for (const id of dueReminders((sched ?? []) as { id: string; status: string; kickoff_utc: string | null; reminder_sent_at: string | null }[], nowMs)) {
     const f = (sched ?? []).find((x: { id: string }) => x.id === id) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string };
     const when = new Date(f.kickoff_utc).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    await fanOutText(db, 'fixture_reminder', `⏰ Tomorrow: ${f.home_club_id} v ${f.away_club_id} (${f.competition_id}) — ${when} IST. Money on the line.`);
+    await fanOutText(db, 'fixture_reminder', `Reminder. ${f.home_club_id} v ${f.away_club_id} (${f.competition_id}) plays ${when} IST. Money on the line.`);
     await db.from('fixtures').update({ reminder_sent_at: new Date().toISOString() }).eq('id', id);
     summary.reminders++;
   }

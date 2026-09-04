@@ -1,55 +1,200 @@
 @import "tailwindcss";
 
-/* Editorial broadsheet: serif headings, tabular rupee figures.
-   Green for credit, red for debit, nothing else coloured. */
+/* Record-office design language: chalk, turf, pitch-deep, referee cards.
+   Hard rule: money is never green. Credits are pitch-deep with +,
+   debits are red-card with −. The sign carries the meaning. */
 
 :root {
-  --ink: #14202b;
-  --muted: #5b6b7a;
-  --line: #dfe7ee;
-  --paper: #ffffff;
-  --green: #0f7a4d;
-  --red: #b3372f;
-  --gold: #b98a1e;
+  --chalk: #F1F4EF;
+  --turf: #4E9A51;
+  --turf-lit: #8FD48A;
+  --pitch-deep: #10281B;
+  --red-card: #C8102E;
+  --yellow-card: #F5C518;
+  --line: #DCE2D8;
+  --muted: #6B7A6E;
+  --surface: #FFFFFF;
 }
 
 body {
-  background: var(--paper);
-  color: var(--ink);
-  font-family: Georgia, "Times New Roman", serif;
+  background: var(--chalk);
+  color: var(--pitch-deep);
+  font-family: "Archivo", system-ui, sans-serif;
+  font-weight: 450;
+  line-height: 1.55;
   margin: 0;
 }
 
-.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+.wrap { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
 
-.masthead { border-bottom: 3px double var(--ink); padding: 28px 0 12px; }
-.kicker { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
-.masthead h1 { font-size: 44px; margin: 0 0 12px; letter-spacing: -0.01em; }
-.masthead nav { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-bottom: 8px; }
-.masthead nav a { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; color: var(--ink); text-decoration: none; border-bottom: 1px solid transparent; }
-.masthead nav a:hover { border-bottom-color: var(--gold); }
+/* masthead */
+.masthead { border-bottom: 1px solid var(--line); padding: 40px 0 0; }
+.masthead h1 {
+  font-family: "Archivo", sans-serif;
+  font-stretch: 118%;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-size: 49px;
+  line-height: 1.15;
+  margin: 0;
+}
+.masthead .season { color: var(--muted); font-size: 16px; margin: 8px 0 20px; max-width: 68ch; }
+.masthead nav { display: flex; flex-wrap: wrap; gap: 4px 24px; padding: 12px 0 16px; border-top: 1px solid var(--line); }
+.masthead nav a { font-size: 14px; font-weight: 500; color: var(--pitch-deep); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; }
+.masthead nav a:hover { border-bottom-color: var(--turf); }
+.masthead nav a:focus-visible, a:focus-visible, button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--turf);
+  outline-offset: 2px;
+}
 
-.foot { border-top: 1px solid var(--line); margin-top: 48px; padding: 16px 24px 40px; color: var(--muted); font-size: 13px; }
+.foot { margin-top: 72px; padding: 16px 24px 40px; color: var(--muted); font-size: 14px; }
+.foot::before {
+  content: "";
+  display: block;
+  width: 120px;
+  height: 1px;
+  background: var(--line);
+  border-bottom-right-radius: 120px;
+  margin-bottom: 16px;
+}
 
-h2 { font-size: 30px; margin: 32px 0 8px; }
-h3 { font-size: 20px; margin: 24px 0 8px; }
-p, li { font-size: 16px; line-height: 1.55; }
-.sans { font-family: ui-sans-serif, system-ui, sans-serif; }
+main.wrap { padding-top: 8px; padding-bottom: 24px; }
 
-table.record { width: 100%; border-collapse: collapse; margin: 16px 0; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 14px; }
-table.record th { text-align: left; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #fff; background: var(--ink); padding: 10px 12px; }
-table.record td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
-table.record tr:nth-child(even) td { background: #f4f8fb; }
+h2 {
+  font-family: "Archivo", sans-serif;
+  font-stretch: 118%;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  font-size: 39px;
+  line-height: 1.15;
+  margin: 40px 0 8px;
+}
+h3 { font-size: 25px; font-weight: 700; letter-spacing: -0.01em; margin: 32px 0 8px; }
+p, li { font-size: 16px; line-height: 1.55; max-width: 68ch; }
+.sans { font-family: "Archivo", sans-serif; }
 
-.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
-.credit { color: var(--green); font-weight: 700; }
-.debit { color: var(--red); font-weight: 700; }
+/* data tables: 0px radius, mown-stripe rows, numbers right-aligned tabular */
+table.record { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; background: var(--surface); }
+table.record th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface);
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--pitch-deep);
+}
+table.record td { padding: 12px; border-bottom: 1px solid var(--line); }
+table.record tbody tr:nth-child(even) td { background: var(--chalk); }
+table.record td.num, table.record th.num { text-align: right; }
 
-.zero-ok { display: inline-block; font-family: ui-sans-serif, system-ui, sans-serif; background: var(--ink); color: #fff; padding: 8px 16px; font-size: 18px; }
-.zero-bad { display: inline-block; font-family: ui-sans-serif, system-ui, sans-serif; background: var(--red); color: #fff; padding: 8px 16px; font-size: 18px; }
+.num {
+  font-family: "Archivo", sans-serif;
+  font-stretch: 78%;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+/* money: sign carries meaning; green is brand-only and never touches money */
+.credit { color: var(--pitch-deep); font-weight: 600; }
+.debit { color: var(--red-card); font-weight: 600; }
 
-.card { border: 1px solid var(--line); padding: 16px 20px; margin: 12px 0; }
-.card h4 { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin: 0 0 8px; }
+/* centre-circle zero-sum mark: ring + spot, turf when zero, red-card when not */
+.zero { display: inline-flex; align-items: center; gap: 12px; font-family: "Archivo", sans-serif; font-size: 20px; font-weight: 600; }
+.zero .ring {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 3px solid var(--turf);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.zero .ring::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--turf); }
+.zero.bad .ring { border-color: var(--red-card); }
+.zero.bad .ring::after { background: var(--red-card); }
+
+/* dashboard hero: floodlit perimeter slab, the one loud element */
+.hero {
+  background: var(--pitch-deep);
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Cpath d='M0 28L28 0M0 0l28 28' stroke='%238FD48A' stroke-opacity='0.08' stroke-width='1'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, #10281B 0%, #16351f 100%);
+  border-radius: 4px;
+  padding: 40px;
+  margin: 32px 0;
+  color: var(--chalk);
+}
+.hero h2 { color: var(--chalk); margin-top: 0; }
+.hero-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 24px; }
+@media (max-width: 720px) { .hero-grid { grid-template-columns: 1fr 1fr; } }
+.hero-cell .who { font-size: 14px; color: var(--chalk); opacity: 0.75; }
+.hero-cell .bal {
+  font-family: "Archivo", sans-serif;
+  font-stretch: 118%;
+  font-weight: 800;
+  font-size: 39px;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  margin: 4px 0;
+}
+.hero-cell .bal.up { color: var(--turf-lit); }
+.hero-cell .bal.down { color: #E8425C; }
+.hero-cell .wld { font-size: 14px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.hero-foot { display: flex; align-items: center; gap: 16px; margin-top: 28px; flex-wrap: wrap; }
+.hero-foot .zero { color: var(--chalk); font-size: 16px; }
+.hero-foot .zero .ring { width: 32px; height: 32px; }
+
+/* goal frame: trophy-pool meter container, open at the bottom */
+.goalframe { border: 2px solid var(--pitch-deep); border-bottom: none; border-radius: 0; padding: 16px 20px 20px; background: var(--surface); }
+.meter { height: 12px; background: var(--chalk); border-radius: 0; overflow: hidden; margin-top: 12px; }
+.meter > span { display: block; height: 100%; background: var(--turf-lit); }
+
+/* cards: 4px. referee-card alerts: 0px, 3:4.5 proportions hint, slight tilt */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 16px 20px; margin: 12px 0; box-shadow: 0 1px 2px rgba(16,40,27,0.06); }
+.card h4 { font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 8px; }
+.notice-yellow {
+  background: var(--surface);
+  border-left: 8px solid var(--yellow-card);
+  border-radius: 0;
+  padding: 12px 16px;
+  margin: 12px 0;
+  transform: rotate(-0.5deg);
+}
+.notice-red {
+  background: var(--surface);
+  border-left: 8px solid var(--red-card);
+  border-radius: 0;
+  padding: 12px 16px;
+  margin: 12px 0;
+  transform: rotate(-0.5deg);
+}
+
+button, input[type="submit"] {
+  font-family: "Archivo", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--pitch-deep);
+  color: var(--chalk);
+  border: none;
+  border-radius: 2px;
+  padding: 10px 18px;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+button.ghost { background: transparent; color: var(--pitch-deep); border: 1px solid var(--line); }
+input[type="text"], input:not([type]) {
+  font-family: "Archivo", sans-serif;
+  font-size: 14px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--pitch-deep);
+}
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } .masthead h1 { font-size: 32px; } }
+@media (max-width: 720px) {
+  .grid2 { grid-template-columns: 1fr; }
+  .masthead h1 { font-size: 31px; }
+  table.record td:nth-child(n+5), table.record th:nth-child(n+5) { font-size: 13px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+a { transition: border-color 140ms ease-out, background 140ms ease-out; }

@@ -13,22 +13,27 @@ const NAV: [string, string][] = [
   ["/clubs", "Clubs"],
   ["/h2h", "Head-to-Head"],
   ["/trophies", "Trophies"],
-  ["/ledger", "Ledger"],
   ["/awards", "Awards"],
-  ["/settle", "Settle"],
-  ["/weekly", "Weekly"],
+  ["/me", "You"],
   ["/constitution", "Constitution"],
-  ["/commissioner", "Commissioner"],
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body>
         <header className="masthead">
           <div className="wrap">
-            <p className="kicker">Fantasy Football Money Game · Season 2026/27</p>
             <h1>The Record Book</h1>
+            <p className="season">Fantasy Football Money Game, Season 2026/27</p>
             <nav>
               {NAV.map(([href, label]) => (
                 <a key={href} href={href}>{label}</a>
@@ -38,7 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
         <main className="wrap">{children}</main>
         <footer className="wrap foot">
-          <p>Squads locked 20 August 2026 · Archit, Vedant, Harshal, Anmol · Append-only and permanent.</p>
+          <p>Squads locked 20 August 2026. Four players. Append-only and permanent.</p>
         </footer>
       </body>
     </html>
