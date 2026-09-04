@@ -21,6 +21,9 @@ const COMP_ALIASES: Record<string, string> = {
   'copa del rey': 'COPA_DEL_REY',
   'coppa italia': 'COPPA_ITALIA',
   'dfb-pokal': 'DFB_POKAL', 'dfb pokal': 'DFB_POKAL',
+  'community shield': 'COMMUNITY_SHIELD',
+  'dfl-supercup': 'DFL_SUPERCUP', 'dfl supercup': 'DFL_SUPERCUP',
+  'german super cup': 'DFL_SUPERCUP', 'bundesliga super cup': 'DFL_SUPERCUP',
 };
 
 const CLUB_ALIASES: Record<string, string> = {

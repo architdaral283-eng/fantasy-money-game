@@ -10,8 +10,18 @@ export default function Commissioner() {
   const [line, setLine] = useState('Arsenal 2-0 Manchester City - Premier League');
   const [msg, setMsg] = useState<string>('');
   const [approvalId, setApprovalId] = useState<string | null>(null);
-  const [ratified, setRatified] = useState(false);
+  const [ratified1, setRatified1] = useState(false);
+  const [ratified2, setRatified2] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const ratify = async (key: string, done: (v: boolean) => void) => {
+    const res = await fetch('/api/amendments/ratify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, decidedBy: 'archit' }),
+    });
+    if (res.ok) done(true);
+    else setMsg(`❌ ${(await res.json()).error}`);
+  };
 
   const submit = async () => {
     setBusy(true); setMsg(''); setApprovalId(null);
@@ -50,12 +60,19 @@ export default function Commissioner() {
   return (
     <>
       <h2>Commissioner Console</h2>
-      {!ratified && (
+      {!ratified1 && (
         <div className="card">
           <h4>Amendment I — Assisted Operating Mode (pending ratification)</h4>
           <p>The Commissioner may proactively retrieve results from designated data providers. Retrieved results are <strong>proposals only</strong> and carry no force. No proposal enters the ledger without explicit approval from Archit.</p>
-          <button className="sans" onClick={() => setRatified(true)}>Ratify Amendment I (Archit only)</button>
+          <button className="sans" onClick={() => ratify('amendment_1_assisted_mode', setRatified1)}>Ratify Amendment I (Archit only)</button>
           <p className="sans">The poller cannot run until this is accepted.</p>
+        </div>
+      )}
+      {!ratified2 && (
+        <div className="card">
+          <h4>Amendment II — One-off cups in scope (pending: needs all four members)</h4>
+          <p>Community Shield and DFL-Supercup enter scope for <strong>match money only</strong> (₹500/₹1000, single leg, extra time and penalties as per Article V). No trophy, not part of the ₹24,000 pool. Ratify only once Vedant, Harshal and Anmol have all agreed.</p>
+          <button className="sans" onClick={() => ratify('amendment_2_oneoffs', setRatified2)}>Ratify Amendment II (Archit only, after all agree)</button>
         </div>
       )}
       <h3>Record a result</h3>
@@ -69,7 +86,7 @@ export default function Commissioner() {
       {msg && <p className="sans">{msg}</p>}
       <div className="card">
         <h4>Format examples</h4>
-        <p className="sans">Arsenal 2-0 Manchester City - Premier League<br />Barcelona 4-0 Real Madrid - Copa del Rey<br />Inter 1-1 Juventus - Serie A</p>
+        <p className="sans">Arsenal 2-0 Manchester City - Premier League<br />Barcelona 4-0 Real Madrid - Copa del Rey<br />Inter 1-1 Juventus - Serie A<br />Bayern Munich 2-1 Dortmund - DFL-Supercup (needs Amendment II ratified)</p>
       </div>
       <h3>Open decisions for Archit (§17)</h3>
       <ul className="sans">

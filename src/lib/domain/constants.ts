@@ -57,6 +57,8 @@ export interface CompetitionSeed {
   winnerPrize: number;
   eachOtherPays: number;
   fdOrgCode: string | null;
+  /** One-off super cups: match money only, no trophy, not in the ₹24,000 pool. Added by Amendment II. */
+  oneOff?: boolean;
 }
 
 export const COMPETITIONS: CompetitionSeed[] = [
@@ -69,6 +71,10 @@ export const COMPETITIONS: CompetitionSeed[] = [
   { id: 'copadelrey', name: 'Copa del Rey', code: 'COPA_DEL_REY', inScope: true, winnerPrize: 1500, eachOtherPays: 500, fdOrgCode: null },
   { id: 'coppa', name: 'Coppa Italia', code: 'COPPA_ITALIA', inScope: true, winnerPrize: 1500, eachOtherPays: 500, fdOrgCode: null },
   { id: 'dfbpokal', name: 'DFB-Pokal', code: 'DFB_POKAL', inScope: true, winnerPrize: 1500, eachOtherPays: 500, fdOrgCode: null },
+  // one-offs — Amendment II: in scope for MATCH MONEY ONLY. No trophy, no pool.
+  // Future one-offs (UEFA Super Cup, Supercopa, Supercoppa…) join here only by amendment.
+  { id: 'communityshield', name: 'Community Shield', code: 'COMMUNITY_SHIELD', inScope: true, winnerPrize: 0, eachOtherPays: 0, fdOrgCode: null, oneOff: true },
+  { id: 'dflsupercup', name: 'DFL-Supercup', code: 'DFL_SUPERCUP', inScope: true, winnerPrize: 0, eachOtherPays: 0, fdOrgCode: null, oneOff: true },
   // explicitly excluded — hard-reject (§3.2)
   { id: 'uel', name: 'Europa League', code: 'UEL', inScope: false, winnerPrize: 0, eachOtherPays: 0, fdOrgCode: 'EL' },
   { id: 'uecl', name: 'Conference League', code: 'UECL', inScope: false, winnerPrize: 0, eachOtherPays: 0, fdOrgCode: 'ECL' },

@@ -9,7 +9,10 @@ const COMP_ID: Record<string, string> = {
   EPL: 'epl', LA_LIGA: 'laliga', BUNDESLIGA: 'bundesliga', SERIE_A: 'seriea',
   UCL: 'ucl', FA_CUP: 'facup', COPA_DEL_REY: 'copadelrey',
   COPPA_ITALIA: 'coppa', DFB_POKAL: 'dfbpokal',
+  COMMUNITY_SHIELD: 'communityshield', DFL_SUPERCUP: 'dflsupercup',
 };
+
+const ONE_OFFS = new Set(['COMMUNITY_SHIELD', 'DFL_SUPERCUP']);
 
 /**
  * Manual result entry — Commissioner types one line, e.g.
@@ -34,8 +37,18 @@ async function handle(req: Request) {
 
   const db = supabaseService();
   const compId = COMP_ID[parsed.competitionCode];
+  const isOneOff = ONE_OFFS.has(parsed.competitionCode);
+
+  // Amendment II gate: one-offs refuse until all four members agree + Archit ratifies.
+  if (isOneOff) {
+    const { data: cfg } = await db.from('config').select('value').eq('key', 'amendment_2_oneoffs').single();
+    if ((cfg?.value as { status?: string })?.status !== 'ratified') {
+      return NextResponse.json({ error: 'Amendment II (one-off cups) is pending — ratify it in the Commissioner console once all four members agree.' }, { status: 409 });
+    }
+  }
+
   const isUcl = parsed.competitionCode === 'UCL';
-  const round = isUcl ? 'League Phase' : 'League';
+  const round = isOneOff ? 'One-off' : isUcl ? 'League Phase' : 'League';
 
   // find the scheduled fixture — exact home/away order first, else the reverse leg
   const { data: exact } = await db.from('fixtures').select('*')
@@ -53,11 +66,22 @@ async function handle(req: Request) {
     swapped = true;
   }
   if (!fixture) {
-    return NextResponse.json({
-      error: isUcl
-        ? 'These two clubs were not drawn together in the UCL league phase — nothing to record.'
-        : 'No such league fixture (cup ties can only be entered once drawn — coming in the cup update).',
-    }, { status: 404 });
+    if (isOneOff) {
+      // one-offs have no pre-seeded fixture: create it on the fly (single leg, named order)
+      const { data: created, error: eCreate } = await db.from('fixtures').insert({
+        competition_id: compId, round,
+        home_club_id: parsed.homeClubId, away_club_id: parsed.awayClubId,
+        status: 'SCHEDULED', is_same_owner: false,
+      }).select('*').single();
+      if (eCreate || !created) return NextResponse.json({ error: 'Could not create one-off fixture.' }, { status: 500 });
+      fixture = created;
+    } else {
+      return NextResponse.json({
+        error: isUcl
+          ? 'These two clubs were not drawn together in the UCL league phase — nothing to record.'
+          : 'No such league fixture (cup ties can only be entered once drawn — coming in the cup update).',
+      }, { status: 404 });
+    }
   }
   if (fixture.status === 'RECORDED') {
     return NextResponse.json({ error: 'This fixture is already recorded. To fix it, use a correction (ask here and I\'ll wire the form).' }, { status: 409 });

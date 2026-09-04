@@ -53,6 +53,7 @@ export type ProposalKind =
   | 'LEG_RECORDED_SUPPRESSED' // one leg of a 2-leg tie: log, ₹0, no W/L/D
   | 'TROPHY_PAYOUT'
   | 'TROPHY_UNOWNED'
+  | 'NO_TROPHY_EVENT' // one-off super cups (Amendment II): match money only, never a trophy
   | 'MANUAL_REVIEW';
 
 export interface Proposal {
@@ -219,8 +220,9 @@ export function scoreSingleFixture(r: NormalisedResult): Proposal {
   };
 }
 
-/** Single-leg cup = any in-scope cup round with leg_count 1 (FA/DFB/Coppa always; Copa except SF; UCL final). */
+/** Single-leg cup = any in-scope cup round with leg_count 1 (FA/DFB/Coppa always; Copa except SF; UCL final; one-offs). */
 export function isSingleLegCup(competitionCode: string, round: string): boolean {
+  if (competitionCode === 'COMMUNITY_SHIELD' || competitionCode === 'DFL_SUPERCUP') return true;
   if (competitionCode === 'EPL' || competitionCode === 'LA_LIGA' || competitionCode === 'BUNDESLIGA' || competitionCode === 'SERIE_A') return false;
   if (competitionCode === 'UCL') {
     return round === 'Final' || round === 'League Phase';
@@ -356,6 +358,13 @@ export function scoreTrophy(
   if (!comp || !comp.inScope) {
     return {
       kind: 'REJECTED_OUT_OF_SCOPE', transfers: [], winnerPlayer: null,
+      loserPlayer: null, isDraw: false, margin: 0, amount: 0, reviewReason: null,
+    };
+  }
+  if (comp.oneOff) {
+    // Amendment II: one-off super cups pay match money only — never a trophy.
+    return {
+      kind: 'NO_TROPHY_EVENT', transfers: [], winnerPlayer: null,
       loserPlayer: null, isDraw: false, margin: 0, amount: 0, reviewReason: null,
     };
   }

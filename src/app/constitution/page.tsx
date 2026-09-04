@@ -24,7 +24,7 @@ export default function Constitution() {
       <h3>Knockouts</h3>
       <p>Whoever advances wins. Extra time counts. A penalty shootout is a win. Two legs, one aggregate result.</p>
       <h3>Amendment history</h3>
-      <p className="sans">Ratified 17 August 2026 · Squads locked 20 August 2026 · <strong>Amendment I (Assisted Operating Mode) — pending Archit&apos;s ratification in the Commissioner console.</strong></p>
+      <p className="sans">Ratified 17 August 2026 · Squads locked 20 August 2026 · <strong>Amendment I (Assisted Operating Mode) — pending Archit&apos;s ratification in the Commissioner console.</strong> · <strong>Amendment II (one-off cups in scope for match money only) — pending all four members&apos; agreement.</strong></p>
       <div className="card">
         <h4>Remember</h4>
         <p>The four balances always sum to ₹0. If they don&apos;t, something is wrong.</p>

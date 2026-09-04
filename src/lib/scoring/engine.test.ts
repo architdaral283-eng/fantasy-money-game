@@ -200,6 +200,49 @@ describe('Two-legged ties (§3.6)', () => {
   });
 });
 
+describe('Amendment II — one-off super cups (match money only)', () => {
+  it('DFL-Supercup Bayern 2-1 Dortmund → Harshal +500 from Anmol', () => {
+    const p = scoreSingleFixture(
+      base({ competitionCode: 'DFL_SUPERCUP', round: 'One-off', homeClubId: 'bayern', awayClubId: 'dortmund', scoreAt90: { home: 2, away: 1 } }),
+    );
+    expect(p.kind).toBe('SINGLE_LEG_CUP_RESULT');
+    expect(p.amount).toBe(500);
+    expect(p.winnerPlayer).toBe('harshal');
+    expect(p.loserPlayer).toBe('anmol');
+    expect(allSumsZero(p.transfers)).toBe(true);
+  });
+
+  it('Community Shield 4-0 thrashing → ₹1000', () => {
+    const p = scoreSingleFixture(
+      base({ competitionCode: 'COMMUNITY_SHIELD', round: 'One-off', homeClubId: 'arsenal', awayClubId: 'man-city', scoreAt90: { home: 4, away: 0 } }),
+    );
+    expect(p.amount).toBe(1000);
+    expect(p.winnerPlayer).toBe('archit');
+  });
+
+  it('One-off with unowned club → ignored completely', () => {
+    const p = scoreSingleFixture(
+      base({ competitionCode: 'DFL_SUPERCUP', round: 'One-off', homeClubId: 'bayern', awayClubId: 'stuttgart', scoreAt90: { home: 2, away: 0 } }),
+    );
+    expect(p.kind).toBe('IGNORED_UNOWNED');
+  });
+
+  it('One-offs carry no trophy — NO_TROPHY_EVENT, zero rows', () => {
+    for (const code of ['DFL_SUPERCUP', 'COMMUNITY_SHIELD']) {
+      const t = scoreTrophy(code, 'bayern');
+      expect(t.kind).toBe('NO_TROPHY_EVENT');
+      expect(t.transfers).toHaveLength(0);
+    }
+  });
+
+  it('Europa League stays rejected', () => {
+    const p = scoreSingleFixture(
+      base({ competitionCode: 'UEL', homeClubId: 'bayern', awayClubId: 'arsenal', scoreAt90: { home: 2, away: 0 } }),
+    );
+    expect(p.kind).toBe('REJECTED_OUT_OF_SCOPE');
+  });
+});
+
 describe('Trophies (§3.8)', () => {
   it('15. Arsenal win EPL → 3 rows of ₹1000', () => {
     const t = scoreTrophy('EPL', 'arsenal');
