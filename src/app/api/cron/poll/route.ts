@@ -53,10 +53,33 @@ export async function POST(req: Request) {
   const lastMs = Date.parse((lastSync?.value as { at?: string })?.at ?? '2000-01-01');
   const doScheduleSync = (undated ?? 0) > 0 || nowMs - lastMs > 24 * 3600 * 1000;
 
+  // live window: only competitions with a fixture near kickoff get polled.
+  // Anything finished is inside this window by the kickoff+100min rule.
+  const { data: live } = await db.from('fixtures').select('competition_id,kickoff_utc')
+    .eq('status', 'SCHEDULED')
+    .gte('kickoff_utc', new Date(nowMs - 5 * 3600 * 1000).toISOString())
+    .lte('kickoff_utc', new Date(nowMs + 15 * 60 * 1000).toISOString());
+  const liveCodes = new Set(((live ?? []) as { competition_id: string }[]).map((f) => f.competition_id));
+  const codeOf: Record<string, string> = { epl: 'EPL', laliga: 'LA_LIGA', bundesliga: 'BUNDESLIGA', seriea: 'SERIE_A', ucl: 'UCL' };
+  const wanted = new Set([...liveCodes].map((c) => codeOf[c]).filter(Boolean));
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  let firstCall = true;
+  const callSpacing = async () => {
+    if (firstCall) { firstCall = false; return; }
+    await sleep(6500); // free tier: 10 req/min — stay well inside
+  };
+
   for (const code of FD_COMPS) {
+    // outside a live window with dates synced, skip the provider entirely
+    if (!wanted.has(code) && !doScheduleSync) {
+      summary.perCompetition.push({ code, total: 0, ownedReturned: 0, matched: 0, scheduled: 0, skipped: true });
+      continue;
+    }
     let results: NormalisedResult[];
     let total = 0;
     try {
+      await callSpacing();
       const fetched = await provider.listFixtures({ competitionCode: code, season: '2026' });
       results = fetched.results;
       total = fetched.total;
@@ -72,6 +95,7 @@ export async function POST(req: Request) {
     // schedule pass: date every owned-v-owned fixture (finished or future)
     if (doScheduleSync) {
       try {
+        await callSpacing();
         const sched = await provider.listSchedule({ competitionCode: code, season: '2026' });
         await db.from('api_call_log').insert({ provider: 'football-data', endpoint: `schedule:${code}` });
         for (const s of sched) {
