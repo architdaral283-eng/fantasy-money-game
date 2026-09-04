@@ -231,9 +231,29 @@ export async function POST(req: Request) {
   const chatId = chat?.id;
   const isGroup = chat?.type === 'group' || chat?.type === 'supergroup';
   if (!text || !chatId) return NextResponse.json({ ok: true });
-  // group silence rule: only slash commands get a response. Everything else
+  // group silence rule: only slash commands get a response, except answering
+  // a question the bot itself just asked (5-minute window). Everything else
   // passes without a sound. Fixture updates surface as the pin edit alone.
-  if (isGroup && !text.startsWith('/')) return NextResponse.json({ ok: true });
+  if (isGroup && !text.startsWith('/')) {
+    const { data: pend } = await db.from('config').select('value').eq('key', `pending_prompt:${chatId}`).single();
+    const pr = (pend?.value as { kind?: string; at?: string } | null);
+    if (pr?.kind === 'taunt-player' && pr.at && Date.now() - Date.parse(pr.at) < 5 * 60 * 1000) {
+      const who = text.toLowerCase().trim();
+      const pid = ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || who.split(/[\s,]+/).includes(p));
+      await db.from('config').delete().eq('key', `pending_prompt:${chatId}`);
+      if (pid) {
+        const me2 = await playerByTg(db, update.message?.from?.id);
+        if (!me2) return NextResponse.json({ ok: true });
+        const reply2 = (t: string) => tgApi('sendMessage', { chat_id: chatId, text: t.slice(0, 4000), parse_mode: 'HTML' });
+        await answerTaunt(db, reply2, pid);
+        return NextResponse.json({ ok: true });
+      }
+    }
+    return NextResponse.json({ ok: true });
+  }
+    }
+    return NextResponse.json({ ok: true });
+  }
   const me = await playerByTg(db, update.message?.from?.id);
   if (me) await markInbound(db, me.id);
   const reply = (t: string, kb?: { text: string; callback_data?: string; url?: string }[][]) =>
@@ -527,6 +547,43 @@ export async function fireRoast(db: ReturnType<typeof supabaseService>, fixtureI
   return text;
 }
 
+/** /taunt core. pid undefined = latest fixture. pid null = unresolved name: ask once. */
+async function answerTaunt(
+  db: ReturnType<typeof supabaseService>,
+  reply: (t: string, kb?: { text: string; callback_data?: string; url?: string }[][]) => Promise<unknown>,
+  pid: string | undefined | null,
+  chatId: string,
+) {
+  if (pid === null) {
+    await reply('Name one of the four: archit, vedant, harshal, anmol.');
+    await db.from('config').upsert({ key: `pending_prompt:${chatId}`, value: { kind: 'taunt-player', at: new Date().toISOString() } }, { onConflict: 'key' });
+    return;
+  }
+  const { data: players } = await db.from('players').select('id,name');
+  const nameOf = (id: string) => ((players ?? []) as { id: string; name: string }[]).find((p) => p.id === id)?.name ?? id;
+  const { data: rec } = await db.from('fixtures').select('id,home_club_id,away_club_id').eq('status', 'RECORDED');
+  const { data: allClubs } = await db.from('clubs').select('id,owner_id');
+  const omap = new Map(((allClubs ?? []) as { id: string; owner_id: string }[]).map((c) => [c.id, c.owner_id]));
+  const pool = ((rec ?? []) as { id: string; home_club_id: string; away_club_id: string }[])
+    .filter((f) => !pid || omap.get(f.home_club_id) === pid || omap.get(f.away_club_id) === pid);
+  if (!pool.length) { await reply(pid ? `${nameOf(pid)} has no counted fixtures yet.` : 'Nothing recorded yet.'); return; }
+  const { data: evts } = await db.from('roast_events').select('fixture_id,posted_at').order('posted_at', { ascending: false }).limit(1);
+  const latestEv = ((evts ?? []) as { fixture_id: string }[])[0];
+  const target = (latestEv && pool.some((f) => f.id === latestEv.fixture_id) && !pid) ? latestEv.fixture_id : pool[pool.length - 1].id;
+  const text = await fireRoast(db, target, !pid);
+  if (!text) { await reply('The room is quiet. No roast today.'); return; }
+  if (!pid) { await reply(text); return; }
+  const [{ data: b2 }, { data: mine2 }] = await Promise.all([
+    db.from('player_balances').select('id,name,net_inr'),
+    db.from('clubs').select('name,league').eq('owner_id', pid),
+  ]);
+  const table = ((b2 ?? []) as { id: string; name: string; net_inr: number }[])
+    .sort((x, y) => Number(y.net_inr) - Number(x.net_inr))
+    .map((r, i) => `${i + 1}. ${r.name} ${Number(r.net_inr) >= 0 ? '+' : '−'}₹${Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}`).join('\n');
+  const clubsLine = ((mine2 ?? []) as { name: string; league: string }[]).map((c) => `${c.name} (${c.league})`).join(', ');
+  await reply(`${text}\n\nStandings:\n${table}\n\nDraft: ${clubsLine}`);
+}
+
 async function statsReply(
   db: ReturnType<typeof supabaseService>,
   reply: (t: string, kb?: { text: string; callback_data: string }[][]) => Promise<unknown>,
@@ -590,32 +647,9 @@ async function statsReply(
     return;
   }
   if (cmd === '/taunt') {
-    const who = rest.toLowerCase();
-    const pid = who ? ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === who || nameOf(p).toLowerCase() === who) : undefined;
-    if (who && !pid) { await reply('Name one of the four.'); return; }
-    const { data: rec } = await db.from('fixtures').select('id,home_club_id,away_club_id').eq('status', 'RECORDED');
-    const { data: allClubs } = await db.from('clubs').select('id,owner_id');
-    const omap = new Map(((allClubs ?? []) as { id: string; owner_id: string }[]).map((c) => [c.id, c.owner_id]));
-    const pool = ((rec ?? []) as { id: string; home_club_id: string; away_club_id: string }[])
-      .filter((f) => !pid || omap.get(f.home_club_id) === pid || omap.get(f.away_club_id) === pid);
-    if (!pool.length) { await reply(pid ? `${nameOf(pid)} has no counted fixtures yet.` : 'Nothing recorded yet.'); return; }
-    // most recent = last in seed order is unreliable; use roast_events recency else first candidate
-    const { data: evts } = await db.from('roast_events').select('fixture_id,posted_at').order('posted_at', { ascending: false }).limit(1);
-    const latestEv = ((evts ?? []) as { fixture_id: string }[])[0];
-    const target = (latestEv && pool.some((f) => f.id === latestEv.fixture_id) && !pid) ? latestEv.fixture_id : pool[pool.length - 1].id;
-    const text = await fireRoast(db, target, !pid);
-    if (!text) { await reply('The room is quiet. No roast today.'); return; }
-    if (!pid) { await reply(text); return; }
-    // named roast: latest fixture roast + overall standings + club choice
-    const [{ data: b2 }, { data: mine2 }] = await Promise.all([
-      db.from('player_balances').select('id,name,net_inr'),
-      db.from('clubs').select('name,league').eq('owner_id', pid),
-    ]);
-    const table = ((b2 ?? []) as { id: string; name: string; net_inr: number }[])
-      .sort((x, y) => Number(y.net_inr) - Number(x.net_inr))
-      .map((r, i) => `${i + 1}. ${r.name} ${Number(r.net_inr) >= 0 ? '+' : '−'}₹${Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}`).join('\n');
-    const clubsLine = ((mine2 ?? []) as { name: string; league: string }[]).map((c) => `${c.name} (${c.league})`).join(', ');
-    await reply(`${text}\n\nStandings:\n${table}\n\nDraft: ${clubsLine}`);
+    const clean = rest.replace(/^@\w+\s*/, '').trim().toLowerCase();
+    const pid = clean ? ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === clean || nameOf(p).toLowerCase() === clean) ?? null : undefined;
+    await answerTaunt(db, reply, pid, String(chatId));
     return;
   }
   if (cmd === '/roastadd') {
