@@ -27,7 +27,10 @@ export class FootballDataOrgProvider implements FootballDataProvider {
     const res = await fetch(`${BASE}${path}`, {
       headers: { 'X-Auth-Token': this.token },
     });
-    if (!res.ok) throw new Error(`football-data ${res.status} on ${path}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`football-data ${res.status} on ${path}: ${body.slice(0, 300)}`);
+    }
     return { json: await res.json() };
   }
 
