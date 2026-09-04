@@ -12,7 +12,7 @@ export interface FixtureQuery {
 
 export interface FootballDataProvider {
   readonly name: 'football-data' | 'api-football';
-  listFixtures(q: FixtureQuery): Promise<NormalisedResult[]>;
+  listFixtures(q: FixtureQuery): Promise<{ results: NormalisedResult[]; total: number }>;
   getFixture(providerFixtureId: string): Promise<NormalisedResult | null>;
 }
 

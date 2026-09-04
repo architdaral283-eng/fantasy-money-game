@@ -44,7 +44,7 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, errors: [] as string[], perCompetition: [] as { code: string; ownedReturned: number; matched: number; scheduled: number }[] };
+  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number }[] };
 
   // schedule sync runs when fixtures lack dates or the last sync is >24h old (quota care)
   const { data: lastSync } = await db.from('config').select('value').eq('key', 'last_schedule_sync').single();
@@ -54,8 +54,11 @@ export async function POST(req: Request) {
 
   for (const code of FD_COMPS) {
     let results: NormalisedResult[];
+    let total = 0;
     try {
-      results = await provider.listFixtures({ competitionCode: code, season: '2026' });
+      const fetched = await provider.listFixtures({ competitionCode: code, season: '2026' });
+      results = fetched.results;
+      total = fetched.total;
       await db.from('api_call_log').insert({ provider: 'football-data', endpoint: `listFixtures:${code}` });
     } catch (e) {
       summary.errors.push(`${code}: ${(e as Error).message}`);
@@ -63,7 +66,7 @@ export async function POST(req: Request) {
     }
     const roundFor = (r: NormalisedResult) =>
       code === 'UCL' ? normalizeRound(code, r.round) : 'League';
-    const diag = { code, ownedReturned: results.length, matched: 0, scheduled: 0 };
+    const diag = { code, total, ownedReturned: results.length, matched: 0, scheduled: 0 };
 
     // schedule pass: date every owned-v-owned fixture (finished or future)
     if (doScheduleSync) {

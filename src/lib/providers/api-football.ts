@@ -34,9 +34,9 @@ export class ApiFootballProvider implements FootballDataProvider {
     return json.response ?? [];
   }
 
-  async listFixtures(q: FixtureQuery): Promise<NormalisedResult[]> {
+  async listFixtures(q: FixtureQuery): Promise<{ results: NormalisedResult[]; total: number }> {
     const league = AF_LEAGUE[q.competitionCode];
-    if (!league) return [];
+    if (!league) return { results: [], total: 0 };
     let path = `/fixtures?league=${league}&season=2026`;
     if (q.dateFrom && q.dateTo) path += `&from=${q.dateFrom}&to=${q.dateTo}`;
     const rows = (await this.call(path)) as unknown[];
@@ -45,7 +45,7 @@ export class ApiFootballProvider implements FootballDataProvider {
       const n = this.normalise(r, q.competitionCode);
       if (n) out.push(n);
     }
-    return out;
+    return { results: out, total: rows.length };
   }
 
   async getFixture(providerFixtureId: string): Promise<NormalisedResult | null> {

@@ -50,9 +50,9 @@ export class FootballDataOrgProvider implements FootballDataProvider {
     return { json: await res.json() };
   }
 
-  async listFixtures(q: FixtureQuery): Promise<NormalisedResult[]> {
+  async listFixtures(q: FixtureQuery): Promise<{ results: NormalisedResult[]; total: number }> {
     const fd = FD_COMP[q.competitionCode];
-    if (!fd) return []; // cups not covered — API-Football's job
+    if (!fd) return { results: [], total: 0 }; // cups not covered — API-Football's job
     let path = `/competitions/${fd}/matches?season=2026`;
     if (q.dateFrom && q.dateTo) path += `&dateFrom=${q.dateFrom}&dateTo=${q.dateTo}`;
     const { json } = await this.call(path);
@@ -62,7 +62,7 @@ export class FootballDataOrgProvider implements FootballDataProvider {
       const n = this.normalise(m);
       if (n) out.push(n);
     }
-    return out;
+    return { results: out, total: matches.length };
   }
 
   async getFixture(providerFixtureId: string): Promise<NormalisedResult | null> {
