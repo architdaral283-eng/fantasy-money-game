@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
-import { FootballDataOrgProvider } from '@/lib/providers/football-data';
+import { FootballDataOrgProvider, normalizeRound } from '@/lib/providers/football-data';
 import { mappingConfirmed } from '@/lib/providers/team-ids';
 import { scoreSingleFixture, type NormalisedResult } from '@/lib/scoring/engine';
 import { ownerOf } from '@/lib/domain/constants';
@@ -44,7 +44,13 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, errors: [] as string[], perCompetition: [] as { code: string; ownedReturned: number; matched: number }[] };
+  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, errors: [] as string[], perCompetition: [] as { code: string; ownedReturned: number; matched: number; scheduled: number }[] };
+
+  // schedule sync runs when fixtures lack dates or the last sync is >24h old (quota care)
+  const { data: lastSync } = await db.from('config').select('value').eq('key', 'last_schedule_sync').single();
+  const { count: undated } = await db.from('fixtures').select('id', { count: 'exact', head: true }).is('kickoff_utc', null);
+  const lastMs = Date.parse((lastSync?.value as { at?: string })?.at ?? '2000-01-01');
+  const doScheduleSync = (undated ?? 0) > 0 || nowMs - lastMs > 24 * 3600 * 1000;
 
   for (const code of FD_COMPS) {
     let results: NormalisedResult[];
@@ -56,8 +62,30 @@ export async function POST(req: Request) {
       continue;
     }
     const roundFor = (r: NormalisedResult) =>
-      code === 'UCL' ? (r.round === 'League Phase' ? 'League Phase' : r.round) : 'League';
-    const diag = { code, ownedReturned: results.length, matched: 0 };
+      code === 'UCL' ? normalizeRound(code, r.round) : 'League';
+    const diag = { code, ownedReturned: results.length, matched: 0, scheduled: 0 };
+
+    // schedule pass: date every owned-v-owned fixture (finished or future)
+    if (doScheduleSync) {
+      try {
+        const sched = await provider.listSchedule({ competitionCode: code, season: '2026' });
+        await db.from('api_call_log').insert({ provider: 'football-data', endpoint: `schedule:${code}` });
+        for (const s of sched) {
+          const sRound = code === 'UCL' ? 'League Phase' : 'League';
+          const { data: fx } = await db.from('fixtures').select('id,kickoff_utc,provider_fixture_id')
+            .eq('competition_id', COMP_ID[code]).eq('round', sRound)
+            .or(`and(home_club_id.eq.${s.homeClubId},away_club_id.eq.${s.awayClubId}),and(home_club_id.eq.${s.awayClubId},away_club_id.eq.${s.homeClubId})`)
+            .maybeSingle();
+          if (fx && (!fx.kickoff_utc || !fx.provider_fixture_id)) {
+            await db.from('fixtures').update({ kickoff_utc: s.kickoffUtc, provider_fixture_id: s.providerFixtureId }).eq('id', (fx as { id: string }).id);
+            diag.scheduled++;
+            summary.synced++;
+          }
+        }
+      } catch (e) {
+        summary.errors.push(`schedule ${code}: ${(e as Error).message}`);
+      }
+    }
 
     for (const r of results) {
       // match to our fixture row (named order, else reverse)
@@ -169,6 +197,9 @@ export async function POST(req: Request) {
       }
     }
     summary.perCompetition.push(diag);
+  }
+  if (doScheduleSync) {
+    await db.from('config').upsert({ key: 'last_schedule_sync', value: { at: new Date().toISOString() } }, { onConflict: 'key' });
   }
 
   // 24h reminders — fully automatic

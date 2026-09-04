@@ -19,6 +19,22 @@ function reverseLookup(providerTeamId: number): string | null {
   return null;
 }
 
+/** Schedule row — no scores, works for future fixtures (the results adapter skips those). */
+export interface ScheduleRow {
+  providerFixtureId: string;
+  kickoffUtc: string;
+  homeClubId: string;
+  awayClubId: string;
+  finished: boolean;
+}
+
+/** Normalize a provider stage name to our round. UCL league phase is 'League Stage' in v4. */
+export function normalizeRound(competitionCode: string, stage: string): string {
+  if (competitionCode !== 'UCL') return 'League';
+  if (/league|group/i.test(stage)) return 'League Phase';
+  return stage;
+}
+
 export class FootballDataOrgProvider implements FootballDataProvider {
   readonly name = 'football-data' as const;
   constructor(private token: string) {}
@@ -52,6 +68,31 @@ export class FootballDataOrgProvider implements FootballDataProvider {
   async getFixture(providerFixtureId: string): Promise<NormalisedResult | null> {
     const { json } = await this.call(`/matches/${providerFixtureId}`);
     return this.normalise((json as { match?: unknown }).match ?? json);
+  }
+
+  /** Full schedule incl. future fixtures where BOTH clubs are owned. No scores parsed. */
+  async listSchedule(q: FixtureQuery): Promise<ScheduleRow[]> {
+    const fd = FD_COMP[q.competitionCode];
+    if (!fd) return [];
+    let path = `/competitions/${fd}/matches?season=2026`;
+    if (q.dateFrom && q.dateTo) path += `&dateFrom=${q.dateFrom}&dateTo=${q.dateTo}`;
+    const { json } = await this.call(path);
+    const matches = (json as { matches?: unknown[] }).matches ?? [];
+    const out: ScheduleRow[] = [];
+    for (const m of matches) {
+      const x = m as {
+        id: number; utcDate: string; status: string;
+        homeTeam: { id: number }; awayTeam: { id: number };
+      };
+      const homeClubId = reverseLookup(x.homeTeam.id);
+      const awayClubId = reverseLookup(x.awayTeam.id);
+      if (!homeClubId || !awayClubId) continue;
+      out.push({
+        providerFixtureId: String(x.id), kickoffUtc: x.utcDate,
+        homeClubId, awayClubId, finished: x.status === 'FINISHED',
+      });
+    }
+    return out;
   }
 
   /** Exported for the verification script (§5.4). */
@@ -91,7 +132,7 @@ export class FootballDataOrgProvider implements FootballDataProvider {
     else return null; // IN_PLAY / SCHEDULED / TIMED → not terminal, skip
     return {
       competitionCode: fdCodeToOurs(x.competition.code),
-      round: x.stage ?? 'League',
+      round: normalizeRound(fdCodeToOurs(x.competition.code), x.stage ?? 'League'),
       homeClubId, awayClubId,
       scoreAt90: { home: reg.home, away: reg.away },
       scoreAt120, shootout,
