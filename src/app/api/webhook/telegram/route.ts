@@ -173,25 +173,14 @@ export async function POST(req: Request) {
       }
       // approve
       try {
-        const { data: before } = await db.from('player_balances').select('id,net_inr');
-        const topBefore = ((before ?? []) as { id: string; net_inr: number }[]).sort((a, b) => Number(b.net_inr) - Number(a.net_inr))[0]?.id;
         const r = await approveProposal(db, arg, 'archit');
         void r;
         const { data: approval } = await db.from('pending_approvals').select('proposed_payload').eq('id', arg).single();
-        const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string; margin?: number; amount?: number; terminalStatus?: string };
+        const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string };
         const fixture = `${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}`;
         if (architChat && dmMid) await editText(architChat, dmMid, `APPROVED ${stamp} IST\n${fixture}`);
-        // shape carries the drama: thrashing, shootout, lead change
-        let groupLine = `Recorded. ${fixture}.`;
-        if ((pp.margin ?? 0) >= 4) groupLine = `Thrashing. ${fixture}. ₹${pp.amount}, doubled.`;
-        if (pp.terminalStatus === 'PEN') groupLine += ` Won on penalties. Counts as a win, not a draw.`;
-        const { data: after } = await db.from('player_balances').select('id,name,net_inr');
-        const topAfter = ((after ?? []) as { id: string; net_inr: number }[]).sort((a, b) => Number(b.net_inr) - Number(a.net_inr))[0]?.id;
-        if (topAfter && topBefore && topAfter !== topBefore) {
-          const nm = ((after ?? []) as { id: string; name?: string }[]).find((x) => x.id === topAfter);
-          groupLine += ` Lead change. ${(nm as { name?: string } | undefined)?.name ?? topAfter} takes the table.`;
-        }
-        await sendGroup(db, groupLine);
+        // group silence rule: no result post. The pin edit below is the only
+        // group-visible change on a fixture update.
         await refreshPin(db);
         if (await clearLedgerLock(db)) await refreshPin(db);
         try {
@@ -220,6 +209,9 @@ export async function POST(req: Request) {
   const chatId = chat?.id;
   const isGroup = chat?.type === 'group' || chat?.type === 'supergroup';
   if (!text || !chatId) return NextResponse.json({ ok: true });
+  // group silence rule: only slash commands get a response. Everything else
+  // passes without a sound. Fixture updates surface as the pin edit alone.
+  if (isGroup && !text.startsWith('/')) return NextResponse.json({ ok: true });
   const me = await playerByTg(db, update.message?.from?.id);
   if (me) await markInbound(db, me.id);
   const reply = (t: string, kb?: { text: string; callback_data: string }[][]) =>
@@ -380,9 +372,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // fallback: one-line score?
+  // fallback: one-line score? (DM only — groups stay silent on non-commands)
   const parsed = parseOneLine(text);
   if ('error' in parsed) {
+    if (isGroup) return NextResponse.json({ ok: true });
     const cmd = parseCommand(text);
     if (cmd) { await reply('That lives on the site. Try /standings.'); return NextResponse.json({ ok: true }); }
     await reply(`${parsed.error} Example: Arsenal 2-0 Manchester City - Premier League`);
