@@ -44,7 +44,7 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, errors: [] as string[] };
+  const summary = { synced: 0, proposed: 0, autoLogged: 0, reminders: 0, errors: [] as string[], perCompetition: [] as { code: string; ownedReturned: number; matched: number }[] };
 
   for (const code of FD_COMPS) {
     let results: NormalisedResult[];
@@ -57,6 +57,7 @@ export async function POST(req: Request) {
     }
     const roundFor = (r: NormalisedResult) =>
       code === 'UCL' ? (r.round === 'League Phase' ? 'League Phase' : r.round) : 'League';
+    const diag = { code, ownedReturned: results.length, matched: 0 };
 
     for (const r of results) {
       // match to our fixture row (named order, else reverse)
@@ -75,6 +76,7 @@ export async function POST(req: Request) {
         swapped = true;
       }
       if (!fixture) continue; // not one of our 69 (cup ties join once drawn)
+      diag.matched++;
       // sync date + provider id
       if (!fixture.kickoff_utc || !fixture.provider_fixture_id) {
         await db.from('fixtures').update({ kickoff_utc: r.kickoffUtc, provider_fixture_id: r.providerFixtureId ?? null }).eq('id', fixture.id);
@@ -166,6 +168,7 @@ export async function POST(req: Request) {
         }
       }
     }
+    summary.perCompetition.push(diag);
   }
 
   // 24h reminders — fully automatic
