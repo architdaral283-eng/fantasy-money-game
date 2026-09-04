@@ -2,9 +2,11 @@ name: poll-matchdays
 
 # Matchday polling — Vercel Hobby cron is once-daily, insufficient (§9).
 # Polls the protected route every 20 min during European match windows.
+# Matchday brief runs once at 09:00 IST (03:30 UTC).
 on:
   schedule:
     - cron: '*/20 12-23 * * *'
+    - cron: '30 3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -13,6 +15,18 @@ jobs:
     steps:
       - run: |
           curl -sS -X POST "$APP_URL/api/cron/poll" \
+            -H "Authorization: Bearer $CRON_SECRET"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+  brief:
+    runs-on: ubuntu-latest
+    # only the 03:30 tick (or a manual run) sends the brief
+    if: github.event.schedule == '30 3 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - run: |
+          curl -sS -X POST "$APP_URL/api/cron/brief" \
             -H "Authorization: Bearer $CRON_SECRET"
         env:
           APP_URL: ${{ secrets.APP_URL }}

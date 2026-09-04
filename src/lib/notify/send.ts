@@ -95,3 +95,48 @@ export function dueReminders(
     })
     .map((f) => f.id);
 }
+
+function botToken(): string | null {
+  return process.env.TELEGRAM_BOT_TOKEN ?? null;
+}
+
+async function botCall(method: string, body: object): Promise<{ message_id?: number } | null> {
+  const t = botToken();
+  if (!t) return null;
+  const res = await fetch(`https://api.telegram.org/bot${t}/${method}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!res.ok) return null;
+  const j = (await res.json()) as { result?: { message_id?: number } };
+  return j.result ?? null;
+}
+
+export async function answerCallback(id: string, text?: string, alert = false): Promise<void> {
+  await botCall('answerCallbackQuery', { callback_query_id: id, ...(text ? { text, show_alert: alert } : {}) });
+}
+
+/** Edit a bot message in place (approval outcome, pin refresh). Skips identical content. */
+export async function editText(chatId: string | number, messageId: number, text: string, keyboard?: { text: string; callback_data: string }[][]): Promise<boolean> {
+  const r = await botCall('editMessageText', {
+    chat_id: chatId, message_id: messageId, text: text.slice(0, 4000), parse_mode: 'HTML',
+    ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
+  });
+  return r !== null;
+}
+
+export async function pinMessage(chatId: string | number, messageId: number): Promise<void> {
+  await botCall('pinChatMessage', { chat_id: chatId, message_id: messageId, disable_notification: true });
+}
+
+export async function sendHtml(chatId: string | number, text: string, keyboard?: { text: string; callback_data: string }[][]): Promise<number | null> {
+  const r = await botCall('sendMessage', {
+    chat_id: chatId, text: text.slice(0, 4000), parse_mode: 'HTML',
+    ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
+  });
+  return r?.message_id ?? null;
+}
+
+export async function groupId(db: SupabaseClient): Promise<string | null> {
+  const { data } = await db.from('config').select('value').eq('key', 'telegram_group_chat_id').single();
+  return ((data?.value as { id?: string })?.id ?? null);
+}
