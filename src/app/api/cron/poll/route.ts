@@ -108,8 +108,9 @@ export async function POST(req: Request) {
             .eq('home_club_id', s.homeClubId).eq('away_club_id', s.awayClubId)
             .maybeSingle();
           if (fxErr) throw new Error(`fixture lookup: ${fxErr.message}`);
-          if (fx && ((fx as { kickoff_utc: string | null; provider_fixture_id: string | null }).kickoff_utc !== s.kickoffUtc || !(fx as { provider_fixture_id: string | null }).provider_fixture_id)) {
-            const moved = !!(fx as { kickoff_utc: string | null }).kickoff_utc && (fx as { kickoff_utc: string | null }).kickoff_utc !== s.kickoffUtc;
+          if (fx && (Date.parse((fx as { kickoff_utc: string | null }).kickoff_utc ?? '') !== Date.parse(s.kickoffUtc) || !(fx as { provider_fixture_id: string | null }).provider_fixture_id)) {
+            const stored = Date.parse((fx as { kickoff_utc: string | null }).kickoff_utc ?? '');
+            const moved = !!stored && stored !== Date.parse(s.kickoffUtc);
             await db.from('fixtures').update({
               kickoff_utc: s.kickoffUtc, provider_fixture_id: s.providerFixtureId,
               // rescheduled → reminders must fire again for the new time
