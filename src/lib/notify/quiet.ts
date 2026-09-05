@@ -76,7 +76,27 @@ export async function sendGroup(db: SupabaseClient, text: string, opts: { urgent
   await db.from('notifications').insert({ player_id: null, channel: 'telegram', template_key: 'group', payload: { text }, status: id ? 'SENT' : 'FAILED', provider_message_id: id ? String(id) : null });
 }
 
-/** Release everything due: one digest per destination. Called from the poller each run. */
+/** Group photo with the same quiet/ceiling discipline as text. PNG renders at send time. */
+export async function sendGroupPhoto(db: SupabaseClient, caption: string, fetchPng: () => Promise<ArrayBuffer>, opts: { urgent?: boolean } = {}): Promise<void> {
+  const { data: g } = await db.from('config').select('value').eq('key', 'telegram_group_chat_id').single();
+  const gid = (g?.value as { id?: string })?.id;
+  if (!gid) return;
+  if (!opts.urgent && ((await quietNow(db)) || (await groupSentToday(db)) >= GROUP_DAILY_CEILING)) {
+    await db.from('message_queue').insert({ dest: 'group', template_key: 'photo', payload: { caption }, not_before: nextDigestAt(new Date()).toISOString() });
+    return;
+  }
+  const { TelegramAdapter } = await import('@/lib/notify/channels');
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  const tg = new TelegramAdapter(token);
+  try {
+    const png = await fetchPng();
+    const r = await tg.sendPhoto(gid, caption, png);
+    await db.from('notifications').insert({ player_id: null, channel: 'telegram', template_key: 'photo', payload: { caption }, status: 'SENT', provider_message_id: r.messageId });
+  } catch {
+    await db.from('message_queue').insert({ dest: 'group', template_key: 'photo', payload: { caption }, not_before: new Date().toISOString() });
+  }
+}
 export async function drainQueue(db: SupabaseClient, fetchPng?: () => Promise<ArrayBuffer>): Promise<{ released: number }> {
   const { data: due } = await db.from('message_queue').select('*').is('sent_at', null).lte('not_before', new Date().toISOString()).order('created_at').limit(50);
   const rows = (due ?? []) as { id: number; dest: string; template_key: string; payload: { text?: string; caption?: string } }[];
@@ -89,7 +109,28 @@ export async function drainQueue(db: SupabaseClient, fetchPng?: () => Promise<Ar
   }
   let released = 0;
   for (const [dest, items] of byDest) {
-    const texts = items.map((i) => i.payload.text ?? i.payload.caption ?? '').filter(Boolean);
+    // queued photos render fresh at release, then send
+    for (const item of items.filter((i) => i.template_key === 'photo')) {
+      try {
+        if (!fetchPng) continue;
+        const png = await fetchPng();
+        const { TelegramAdapter } = await import('@/lib/notify/channels');
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        if (!token) continue;
+        const tg = new TelegramAdapter(token);
+        if (dest === 'group') {
+          const { data: g } = await db.from('config').select('value').eq('key', 'telegram_group_chat_id').single();
+          const gid = (g?.value as { id?: string })?.id;
+          if (gid) {
+            const r = await tg.sendPhoto(gid, item.payload.caption ?? 'Standings', png);
+            await db.from('notifications').insert({ player_id: null, channel: 'telegram', template_key: 'photo', payload: { caption: item.payload.caption }, status: 'SENT', provider_message_id: r.messageId });
+          }
+        }
+        await db.from('message_queue').update({ sent_at: new Date().toISOString() }).eq('id', item.id);
+        released++;
+      } catch { /* next run retries */ }
+    }
+    const texts = items.filter((i) => i.template_key !== 'photo').map((i) => i.payload.text ?? i.payload.caption ?? '').filter(Boolean);
     if (!texts.length) continue;
     const digest = `Morning digest\n\n${texts.join('\n\n')}`;
     try {
@@ -102,10 +143,6 @@ export async function drainQueue(db: SupabaseClient, fetchPng?: () => Promise<Ar
         const { data: p } = await db.from('players').select('telegram_chat_id').eq('id', pid).single();
         const chatId = (p as { telegram_chat_id?: string } | null)?.telegram_chat_id;
         if (chatId) await sendHtml(chatId, digest);
-      } else if (dest === 'photos' && fetchPng) {
-        const { linkedPlayers } = await import('@/lib/notify/send');
-        const tg = (await import('@/lib/notify/channels')).TelegramAdapter;
-        void linkedPlayers; void tg;
       }
       await db.from('message_queue').update({ sent_at: new Date().toISOString() }).in('id', items.map((i) => i.id));
       released += items.length;

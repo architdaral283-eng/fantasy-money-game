@@ -204,12 +204,15 @@ export async function POST(req: Request) {
           const roast = await fireRoast(db, (approval as { subject_id: string }).subject_id, false).catch(() => null);
           if (roast) await sendGroup(db, roast);
         }
-        if (await clearLedgerLock(db)) await refreshPin(db);
+        // standings photo: DMs instantly, group follows the same quiet discipline
         try {
           const pngRes = await fetch(`${APP_URL}/api/og/standings`);
           const png = await pngRes.arrayBuffer();
-          await fanOutPhoto(db, 'result_recorded', `Recorded. ${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}. Standings attached.`, async () => png);
-        } catch { /* photo is best-effort; ledger already written */ }
+          await fanOutPhoto(db, 'result_recorded', `Recorded. ${fixture}. Standings attached.`, async () => png);
+          const { sendGroupPhoto } = await import('@/lib/notify/quiet');
+          await sendGroupPhoto(db, `Standings. ${fixture}.`, async () => png);
+        } catch { /* photo best-effort; ledger already written */ }
+        if (await clearLedgerLock(db)) await refreshPin(db);
       } catch (e) {
         const msg = (e as Error).message;
         if (/Already decided/.test(msg) && architChat && dmMid) {
