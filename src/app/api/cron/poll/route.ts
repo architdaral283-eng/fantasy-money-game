@@ -232,6 +232,8 @@ export async function POST(req: Request) {
             const png = await pngRes.arrayBuffer();
             const { fanOutPhoto } = await import('@/lib/notify/send');
             await fanOutPhoto(db, 'result_recorded', `Recorded automatically. ${scoreline}. Standings attached.`, async () => png);
+            const { sendGroupPhoto } = await import('@/lib/notify/quiet');
+            await sendGroupPhoto(db, `Standings. ${scoreline}.`, async () => png);
           } catch { /* photo best-effort */ }
           const roast = await fireRoast(db, fixture.id, false).catch(() => null);
           if (roast) {
