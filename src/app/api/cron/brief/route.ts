@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
-import { fanOutText, groupId } from '@/lib/notify/send';
+import { groupId } from '@/lib/notify/send';
+import { sendGroup } from '@/lib/notify/quiet';
 import { buildBriefText } from '@/lib/notify/panel';
 
 function authed(req: Request): boolean {
@@ -46,6 +47,6 @@ export async function POST(req: Request) {
   }));
   const text = buildBriefText(list);
   if (!text) return NextResponse.json({ ok: true, brief: false });
-  await fanOutText(db, 'matchday_brief', text);
+  await sendGroup(db, text);
   return NextResponse.json({ ok: true, brief: true, fixtures: list.length });
 }

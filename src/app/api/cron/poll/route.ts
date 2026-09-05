@@ -6,7 +6,7 @@ import { scoreSingleFixture, type NormalisedResult } from '@/lib/scoring/engine'
 import { ownerOf } from '@/lib/domain/constants';
 import { fanOutText } from '@/lib/notify/send';
 import { dueReminders } from '@/lib/notify/send';
-import { drainQueue, architAwake } from '@/lib/notify/quiet';
+import { drainQueue, architAwake, sendGroup } from '@/lib/notify/quiet';
 
 function authed(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -300,13 +300,17 @@ export async function POST(req: Request) {
     await db.from('config').upsert({ key: 'last_schedule_sync', value: { at: new Date().toISOString() } }, { onConflict: 'key' });
   }
 
-  // 24h reminders — fully automatic
+  // 24h reminders — group only, flag FIRST so a hiccup can never re-send
   const { data: sched } = await db.from('fixtures').select('id,status,kickoff_utc,reminder_sent_at,home_club_id,away_club_id,competition_id').eq('status', 'SCHEDULED');
   for (const id of dueReminders((sched ?? []) as { id: string; status: string; kickoff_utc: string | null; reminder_sent_at: string | null }[], nowMs)) {
     const f = (sched ?? []).find((x: { id: string }) => x.id === id) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string };
     const when = new Date(f.kickoff_utc).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    await fanOutText(db, 'fixture_reminder', `Reminder. ${f.home_club_id} v ${f.away_club_id} (${f.competition_id}) plays ${when} IST. Money on the line.`);
     await db.from('fixtures').update({ reminder_sent_at: new Date().toISOString() }).eq('id', id);
+    const { data: clubs2 } = await db.from('clubs').select('id,name,owner_id');
+    const cmap2 = new Map(((clubs2 ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
+    const h2 = cmap2.get(f.home_club_id);
+    const a2 = cmap2.get(f.away_club_id);
+    await sendGroup(db, `Tomorrow: ${h2?.name ?? f.home_club_id} v ${a2?.name ?? f.away_club_id} (${f.competition_id}), ${when} IST. ${h2?.owner_id ?? '?'} v ${a2?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`);
     summary.reminders++;
   }
 
@@ -326,8 +330,8 @@ export async function POST(req: Request) {
     for (const f of (soon ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string }[]) {
       const h = cmap.get(f.home_club_id);
       const a = cmap.get(f.away_club_id);
-      await sendGroup(db, `${h?.name ?? f.home_club_id} v ${a?.name ?? f.away_club_id} kicks off in 30 minutes (${f.competition_id}). ${h?.owner_id ?? '?'} v ${a?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`, { urgent: true });
       await db.from('fixtures').update({ pre_match_sent_at: new Date().toISOString() }).eq('id', f.id);
+      await sendGroup(db, `${h?.name ?? f.home_club_id} v ${a?.name ?? f.away_club_id} kicks off in 30 minutes (${f.competition_id}). ${h?.owner_id ?? '?'} v ${a?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`, { urgent: true });
       prematch++;
     }
   }
