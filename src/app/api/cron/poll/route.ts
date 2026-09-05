@@ -333,11 +333,12 @@ export async function POST(req: Request) {
     const { sendGroup } = await import('@/lib/notify/quiet');
     const { data: clubs } = await db.from('clubs').select('id,name,owner_id');
     const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
-    for (const f of (soon ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string }[]) {
+    for (const f of (soon ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string; kickoff_utc: string }[]) {
       const h = cmap.get(f.home_club_id);
       const a = cmap.get(f.away_club_id);
+      const mins = Math.max(1, Math.round((Date.parse(f.kickoff_utc) - Date.now()) / 60000));
       await db.from('fixtures').update({ pre_match_sent_at: new Date().toISOString() }).eq('id', f.id);
-      await sendGroup(db, `${h?.name ?? f.home_club_id} v ${a?.name ?? f.away_club_id} kicks off in 30 minutes (${f.competition_id}). ${h?.owner_id ?? '?'} v ${a?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`, { urgent: true });
+      await sendGroup(db, `${h?.name ?? f.home_club_id} v ${a?.name ?? f.away_club_id} kicks off in ${mins} minutes (${f.competition_id}). ${h?.owner_id ?? '?'} v ${a?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`, { urgent: true });
       prematch++;
     }
   }
