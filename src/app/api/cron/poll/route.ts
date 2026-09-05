@@ -49,7 +49,10 @@ export async function POST(req: Request) {
 
   // schedule sync runs when fixtures lack dates or the last sync is >24h old (quota care)
   const { data: lastSync } = await db.from('config').select('value').eq('key', 'last_schedule_sync').single();
-  const { count: undated } = await db.from('fixtures').select('id', { count: 'exact', head: true }).is('kickoff_utc', null);
+  // one-offs never get provider dates — exclude them or sync runs every tick
+  const { count: undated } = await db.from('fixtures').select('id', { count: 'exact', head: true })
+    .is('kickoff_utc', null)
+    .in('competition_id', ['epl', 'laliga', 'bundesliga', 'seriea', 'ucl']);
   const lastMs = Date.parse((lastSync?.value as { at?: string })?.at ?? '2000-01-01');
   const doScheduleSync = (undated ?? 0) > 0 || nowMs - lastMs > 24 * 3600 * 1000;
 
