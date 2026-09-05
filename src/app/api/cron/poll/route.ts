@@ -310,7 +310,9 @@ export async function POST(req: Request) {
     const cmap2 = new Map(((clubs2 ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
     const h2 = cmap2.get(f.home_club_id);
     const a2 = cmap2.get(f.away_club_id);
-    await sendGroup(db, `Tomorrow: ${h2?.name ?? f.home_club_id} v ${a2?.name ?? f.away_club_id} (${f.competition_id}), ${when} IST. ${h2?.owner_id ?? '?'} v ${a2?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`);
+    const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+    const dayLabel = dayFmt.format(new Date()) === dayFmt.format(new Date(f.kickoff_utc)) ? 'Today' : 'Tomorrow';
+    await sendGroup(db, `${dayLabel}: ${h2?.name ?? f.home_club_id} v ${a2?.name ?? f.away_club_id} (${f.competition_id}), ${when} IST. ${h2?.owner_id ?? '?'} v ${a2?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`);
     summary.reminders++;
   }
 
