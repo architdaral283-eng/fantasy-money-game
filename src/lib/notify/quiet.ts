@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendHtml, fanOutPhoto } from '@/lib/notify/send';
 
 export const QUIET_START_MIN = 23 * 60 + 30; // 23:30 IST
-export const QUIET_END_MIN = 8 * 60; // 08:00 IST
+export const QUIET_END_MIN = 4 * 60; // 04:00 IST — overnight digest releases here
 export const GROUP_DAILY_CEILING = 6;
 
 export function istMinutes(d: Date): number {
@@ -19,11 +19,11 @@ export function inQuietHoursAt(d: Date): boolean {
   return mins >= QUIET_START_MIN || mins < QUIET_END_MIN;
 }
 
-/** Next 08:00 IST as a Date (digest release point). */
+/** Next 04:00 IST as a Date (digest release point). */
 export function nextDigestAt(from: Date): Date {
   const istNow = new Date(from.getTime() + 5.5 * 3600 * 1000);
   const y = istNow.getUTCFullYear(), m = istNow.getUTCMonth(), d = istNow.getUTCDate();
-  let release = Date.UTC(y, m, d, 8, 0, 0) - 5.5 * 3600 * 1000;
+  let release = Date.UTC(y, m, d, 4, 0, 0) - 5.5 * 3600 * 1000;
   if (release <= from.getTime()) release += 24 * 3600 * 1000;
   return new Date(release);
 }

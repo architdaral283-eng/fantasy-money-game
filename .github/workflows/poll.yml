@@ -1,12 +1,13 @@
 name: poll-matchdays
 
 # Matchday polling — Vercel Hobby cron is once-daily, insufficient (§9).
-# Every 5 min through European match windows. The poller itself skips
-# provider calls when no fixture is near kickoff, so most runs are DB-only.
+# Every 5 min while football is on (16:30–04:30 IST); silent 04:00–16:00 IST
+# when nothing plays. The poller itself skips provider calls with no fixture
+# near kickoff, so most runs are DB-only.
 # Matchday brief runs once at 09:00 IST (03:30 UTC).
 on:
   schedule:
-    - cron: '*/5 12-23 * * *'
+    - cron: '*/5 11-23 * * *'
     - cron: '30 3 * * *'
   workflow_dispatch:
 
