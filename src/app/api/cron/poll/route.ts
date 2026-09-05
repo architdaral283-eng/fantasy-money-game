@@ -112,7 +112,7 @@ export async function POST(req: Request) {
             const stored = Date.parse((fx as { kickoff_utc: string | null }).kickoff_utc ?? '');
             const moved = !!stored && stored !== Date.parse(s.kickoffUtc);
             await db.from('fixtures').update({
-              kickoff_utc: s.kickoffUtc, provider_fixture_id: s.providerFixtureId,
+              kickoff_utc: new Date(s.kickoffUtc).toISOString(), provider_fixture_id: s.providerFixtureId,
               // rescheduled → reminders must fire again for the new time
               ...(moved ? { reminder_sent_at: null, pre_match_sent_at: null } : {}),
             }).eq('id', (fx as { id: string }).id);
@@ -145,7 +145,7 @@ export async function POST(req: Request) {
       diag.matched++;
       // sync date + provider id
       if (!fixture.kickoff_utc || !fixture.provider_fixture_id) {
-        await db.from('fixtures').update({ kickoff_utc: r.kickoffUtc, provider_fixture_id: r.providerFixtureId ?? null }).eq('id', fixture.id);
+        await db.from('fixtures').update({ kickoff_utc: new Date(r.kickoffUtc).toISOString(), provider_fixture_id: r.providerFixtureId ?? null }).eq('id', fixture.id);
         summary.synced++;
       }
       if (fixture.status !== 'SCHEDULED') continue;
