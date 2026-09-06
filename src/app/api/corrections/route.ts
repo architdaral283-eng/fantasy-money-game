@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { parseOneLine } from '@/lib/parse/one-line';
 import { scoreSingleFixture } from '@/lib/scoring/engine';
+import { COMMISSIONER_ID, requireCommissioner } from '@/lib/auth/require-commissioner';
 
 /** Competition code → competitions.id */
 const COMP_ID: Record<string, string> = {
@@ -19,8 +20,12 @@ const ONE_OFFS = new Set(['COMMUNITY_SHIELD', 'DFL_SUPERCUP']);
  * is_correction=true and corrects_entry_id pointing at the original.
  * The results row and W/L/D rows (not append-only tables) are updated in place.
  * Two-step: {preview:true} shows original vs corrected; {preview:false} writes.
+ * Commissioner only (ADMIN_SECRET bearer) — the Telegram handler forwards the
+ * same credential for its server-to-server calls after its own role check.
  */
 export async function POST(req: Request) {
+  const denied = requireCommissioner(req);
+  if (denied) return denied;
   try {
     return await handle(req);
   } catch (e) {
@@ -38,15 +43,11 @@ export async function POST(req: Request) {
 }
 
 async function handle(req: Request) {
-  const { line, preview, mode, entryId, decidedBy, fixtureId, homeGoals: hIn, awayGoals: aIn } = (await req.json().catch(() => ({}))) as {
-    line?: string; preview?: boolean; mode?: 'correct' | 'dedupe'; entryId?: number; decidedBy?: string;
+  const { line, preview, mode, entryId, fixtureId, homeGoals: hIn, awayGoals: aIn } = (await req.json().catch(() => ({}))) as {
+    line?: string; preview?: boolean; mode?: 'correct' | 'dedupe'; entryId?: number;
     fixtureId?: string; homeGoals?: number; awayGoals?: number;
   };
   const db = supabaseService();
-  const { data: actor } = await db.from('players').select('role').eq('id', decidedBy ?? 'archit').single();
-  if (actor?.role !== 'COMMISSIONER') {
-    return NextResponse.json({ error: 'Commissioner only.' }, { status: 403 });
-  }
 
   // ——— dedupe: append a single REVERSAL of a duplicated correction row ———
   if (mode === 'dedupe') {
@@ -72,7 +73,7 @@ async function handle(req: Request) {
       corrects_entry_id: entryId,
     });
     if (error) throw new Error(`Dedupe failed: ${error.message}`);
-    await db.from('audit_log').insert({ actor_id: decidedBy ?? 'archit', action: 'DEDUPE', subject_type: 'LEDGER', subject_id: String(entryId) });
+    await db.from('audit_log').insert({ actor_id: COMMISSIONER_ID, action: 'DEDUPE', subject_type: 'LEDGER', subject_id: String(entryId) });
     const { data: balances } = await db.from('player_balances').select('net_inr');
     const sum = (balances ?? []).reduce((s: number, r: { net_inr: number }) => s + Number(r.net_inr), 0);
     if (sum !== 0) throw new Error(`Zero-sum broken after dedupe (sum=${sum}).`);
@@ -224,7 +225,7 @@ async function handle(req: Request) {
   }
 
   await db.from('audit_log').insert({
-    actor_id: 'archit', action: 'CORRECT', subject_type: 'FIXTURE', subject_id: fixture.id,
+    actor_id: COMMISSIONER_ID, action: 'CORRECT', subject_type: 'FIXTURE', subject_id: fixture.id,
     after: { line: lineLabel, correctedScore: `${homeGoals}-${awayGoals}` },
   });
 

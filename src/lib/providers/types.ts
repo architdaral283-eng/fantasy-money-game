@@ -15,8 +15,3 @@ export interface FootballDataProvider {
   listFixtures(q: FixtureQuery): Promise<{ results: NormalisedResult[]; total: number }>;
   getFixture(providerFixtureId: string): Promise<NormalisedResult | null>;
 }
-
-/** Raw payloads are ALWAYS stored as JSONB on the result row (§5.4). */
-export function mustStoreRawPayload(r: NormalisedResult): boolean {
-  return true;
-}

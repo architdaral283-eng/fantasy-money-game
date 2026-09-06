@@ -1,7 +1,10 @@
 // Quiet hours, ceiling, digest — pure time helpers + queue engine.
-// Quiet window 23:30–08:00 IST. Trophy decisions always send immediately.
+// Quiet window 04:30–16:29 IST = the no-polling daytime window (earliest kickoff
+// is 17:00 IST). 16:30–04:29 IST is live: group messages send immediately.
+// Non-urgent messages raised during quiet hours queue for the 16:30 digest.
+// Trophy decisions and pre-match warnings (urgent) always send immediately.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { sendHtml, fanOutPhoto } from '@/lib/notify/send';
+import { sendHtml } from '@/lib/notify/send';
 
 export const QUIET_START_MIN = 4 * 60 + 30; // 04:30 IST
 export const QUIET_END_MIN = 16 * 60 + 30; // 16:30 IST — daytime digest releases here
@@ -57,7 +60,7 @@ async function groupSentToday(db: SupabaseClient): Promise<number> {
   return count ?? 0;
 }
 
-/** Group send with ceiling + quiet gating.nextDigestAt Urgent (trophy) always sends now. */
+/** Group send with ceiling + quiet gating. Urgent (trophy, pre-match) always sends now. */
 export async function sendGroup(db: SupabaseClient, text: string, opts: { urgent?: boolean } = {}): Promise<void> {
   const { data: g } = await db.from('config').select('value').eq('key', 'telegram_group_chat_id').single();
   const gid = (g?.value as { id?: string })?.id;

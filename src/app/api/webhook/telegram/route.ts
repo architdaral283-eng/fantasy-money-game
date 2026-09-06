@@ -8,6 +8,7 @@ import { markInbound, sendGroup } from '@/lib/notify/quiet';
 import { parseCommand, parseOneLine } from '@/lib/parse/one-line';
 import { submitManualLine } from '@/lib/entry/submit';
 import { buildPinText } from '@/lib/notify/panel';
+import { commissionerHeaders, telegramWebhookAuthed } from '@/lib/auth/require-commissioner';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app';
 
@@ -105,8 +106,9 @@ interface Update {
 }
 
 export async function POST(req: Request) {
-  const url = new URL(req.url);
-  if (process.env.TELEGRAM_WEBHOOK_SECRET && url.searchParams.get('secret') !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+  // Telegram echoes the secret_token from setWebhook in X-Telegram-Bot-Api-Secret-Token
+  // on every update. Fails closed: no TELEGRAM_WEBHOOK_SECRET → nothing is accepted.
+  if (!telegramWebhookAuthed(req)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
   const update = (await req.json().catch(() => null)) as Update | null;
@@ -135,8 +137,8 @@ export async function POST(req: Request) {
       }
       await finish('Applying correction.');
       const apply = await fetch(`${APP_URL}/api/corrections`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fixtureId: parts[1], homeGoals: Number(parts[2]), awayGoals: Number(parts[3]), decidedBy: 'archit' }),
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...commissionerHeaders() },
+        body: JSON.stringify({ fixtureId: parts[1], homeGoals: Number(parts[2]), awayGoals: Number(parts[3]) }),
       }).then((r) => r.json()).catch(() => ({ error: 'Correction service unreachable.' }));
       const architChat2 = me.telegram_chat_id;
       if (architChat2) await sendHtml(architChat2, apply.error ? `Correction failed. ${apply.error}` : `Done. ${apply.summary}`);
@@ -190,8 +192,7 @@ export async function POST(req: Request) {
       }
       // approve
       try {
-        const r = await approveProposal(db, arg, 'archit');
-        void r;
+        await approveProposal(db, arg, 'archit');
         const { data: approval } = await db.from('pending_approvals').select('subject_type,subject_id,proposed_payload').eq('id', arg).single();
         const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string };
         const fixture = `${pp.homeClubId ?? ''} v ${pp.awayClubId ?? ''}`;
@@ -369,10 +370,7 @@ export async function POST(req: Request) {
     } else {
       await reply(`Proposal ready. ${r.summary} Waiting on Archit.`);
     }
-    const { data: approval } = await db.from('pending_approvals').select('proposed_payload').eq('id', r.approvalId).single();
-    const pp = (approval?.proposed_payload ?? {}) as { homeClubId?: string; awayClubId?: string };
     await notifyArchitApproval(db, r.approvalId, `Report from ${who}: ${rest}\n${r.summary}`);
-    void pp;
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/pending') {
@@ -410,8 +408,8 @@ export async function POST(req: Request) {
   }
 
   // ——— stakes, projections, social (pure arithmetic over the ledger) ———
-  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct', '/roastadd', '/roastkill', '/roaststats'].includes(cmdline)) {
-    await statsReply(db, reply, cmdline, rest, me.id, me.role, String(chatId), isGroup);
+  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct'].includes(cmdline)) {
+    await statsReply(db, reply, cmdline, rest, me.id, me.role, String(chatId));
     return NextResponse.json({ ok: true });
   }
 
@@ -434,12 +432,6 @@ export async function POST(req: Request) {
 function stripHtml(s: string): string {
   return s.replace(/<[^>]*>/g, '');
 }
-
-export const VALID_SLOTS = new Set([
-  'loser', 'winner', 'loser_club', 'winner_club', 'score', 'margin', 'amount',
-  'competition', 'loser_pick', 'winner_pick', 'h2h', 'loser_net', 'winner_net',
-  'owed', 'streak', 'marquee', 'manager', 'rank',
-]);
 
 /** Gather everything the roast engine needs for one recorded fixture. */
 async function roastContextFor(db: ReturnType<typeof supabaseService>, fixtureId: string, leadChange: boolean) {
@@ -471,8 +463,6 @@ async function roastContextFor(db: ReturnType<typeof supabaseService>, fixtureId
   const evts = ((wld ?? []) as { player_id: string; outcome: 'W' | 'L' | 'D'; occurred_at: string }[]).map((w) => ({ player: w.player_id, outcome: w.outcome, at: w.occurred_at }));
   // h2h + owed between the two owners across all recorded meetings
   const pair = new Set([home.owner_id, away.owner_id]);
-  const ownersOf = (hid: string, aid: string) => new Set([(cmap.get(hid)?.owner_id), (cmap.get(aid)?.owner_id)]);
-  void ownersOf;
   let aw = 0, bw = 0, owed = 0;
   const { data: allFx } = await db.from('fixtures').select('id,home_club_id,away_club_id').eq('status', 'RECORDED');
   const wldAll = ((wld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[]);
@@ -592,9 +582,8 @@ async function statsReply(
   callerId: string,
   callerRole?: string,
   chatId?: string,
-  isGroup?: boolean,
 ) {
-  const { stakesFor, biggestSwing, ceilingFloor, formString, activeLosingStreak, pickTaunt, inr } = await import('@/lib/stats/projections');
+  const { stakesFor, biggestSwing, ceilingFloor, formString, inr } = await import('@/lib/stats/projections');
   const { resolveClub } = await import('@/lib/parse/one-line');
   const [{ data: bal }, { data: wld }, { data: fx }, { data: tr }, { data: ledger }, { data: clubs }, { data: comps }] = await Promise.all([
     db.from('player_balances').select('id,name,net_inr'),
@@ -652,44 +641,6 @@ async function statsReply(
     const clean = rest.replace(/^@\w+\s*/, '').trim().toLowerCase();
     const pid = clean ? ['archit', 'vedant', 'harshal', 'anmol'].find((p) => p === clean || nameOf(p).toLowerCase() === clean) ?? null : undefined;
     await answerTaunt(db, reply, pid, String(chatId));
-    return;
-  }
-  if (cmd === '/roastadd') {
-    if (isGroup) { await reply('That one lives in DM. Message me directly.'); return; }
-    const m = rest.match(/^(\S+)\s+([\s\S]+)$/);
-    if (!m) { await reply('Send "/roastadd" plus club plus text. /roastadd arsenal Your text with {slots}'); return; }
-    const { resolveClub } = await import('@/lib/parse/one-line');
-    const cid = resolveClub(m[1]);
-    if (!cid) { await reply(`Unknown club "${m[1]}".`); return; }
-    const slots = [...m[2].matchAll(/\{(\w+)\}/g)].map((x) => x[1]);
-    const bad = slots.filter((s) => !VALID_SLOTS.has(s));
-    if (bad.length) { await reply(`Unknown slots: ${bad.join(', ')}. Valid: ${[...VALID_SLOTS].join(', ')}`); return; }
-    const { data: blocked } = await db.from('blocked_terms').select('term');
-    const hit = ((blocked ?? []) as { term: string }[]).find((b) => m[2].toLowerCase().includes(b.term.toLowerCase()));
-    if (hit) { await reply('That line trips a content boundary. Killed on sight, no appeal.'); return; }
-    const { data: ins } = await db.from('roast_templates').insert({
-      body: m[2].slice(0, 600), target: 'LOSER', scope: 'CLUB', club_id: cid,
-      conditions: {}, severity: 2, weight: 15, author_player_id: callerId,
-    }).select('id').single();
-    await reply(ins ? `Line banked as #${(ins as { id: number }).id}. It fires with a 1.5x bonus.` : 'Could not bank that line.');
-    return;
-  }
-  if (cmd === '/roastkill') {
-    if (isGroup) { await reply('That one lives in DM. Message me directly.'); return; }
-    const id = parseInt(rest, 10);
-    if (!id) { await reply('Send "/roastkill" plus the line number shown under the roast.'); return; }
-    const { data: done } = await db.from('roast_templates').update({ retired: true }).eq('id', id).select('id');
-    await reply(done && (done as unknown[]).length ? `Line #${id} retired. Effective immediately, no ceremony.` : `No line #${id}.`);
-    return;
-  }
-  if (cmd === '/roaststats') {
-    const { data: all } = await db.from('roast_templates').select('id,club_id,use_count,retired').eq('retired', false);
-    const rows = ((all ?? []) as { id: number; club_id: string | null; use_count: number }[]);
-    const per = new Map<string, number>();
-    for (const r of rows) per.set(r.club_id ?? 'meta', (per.get(r.club_id ?? 'meta') ?? 0) + 1);
-    const thin = [...per.entries()].filter(([, n]) => n < 5).map(([c]) => c);
-    const top = [...rows].sort((a, b) => b.use_count - a.use_count).slice(0, 3).map((r) => `#${r.id} x${r.use_count}`).join(', ');
-    await reply(`Corpus: ${rows.length} live lines. Most used: ${top || 'none yet'}. Thin pools (under 5): ${thin.join(', ') || 'none'}.`);
     return;
   }
   if (cmd === '/h2h') {
@@ -795,10 +746,11 @@ async function statsReply(
     return;
   }
   if (cmd === '/correct') {
+    if (callerRole !== 'COMMISSIONER') { await reply('Commissioner only.'); return; }
     if (!rest) { await reply('Send "/correct" plus the right line. Bayern Munich 2-1 Dortmund - DFL-Supercup'); return; }
-    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app'}/api/corrections`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ line: rest, preview: true, decidedBy: callerId }),
+    const res = await fetch(`${APP_URL}/api/corrections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...commissionerHeaders() },
+      body: JSON.stringify({ line: rest, preview: true }),
     }).then((r) => r.json()).catch(() => ({ error: 'Correction service unreachable.' }));
     if (res.error || !res.preview) { await reply(res.error ?? 'Could not preview.'); return; }
     await reply(

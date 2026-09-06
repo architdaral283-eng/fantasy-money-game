@@ -81,18 +81,3 @@ export class WhatsAppCloudAdapter implements NotificationChannel {
     return { messageId: json.messages?.[0]?.id ?? 'unknown' };
   }
 }
-
-/** Approval message body — must decide without opening the app (§6). */
-export function approvalMessageText(args: {
-  competition: string; home: string; away: string;
-  homeOwner: string; awayOwner: string; scoreline: string; status: string;
-  margin: number; amount: number; winner: string; loser: string;
-  balances: Record<string, number>; singleSource: boolean;
-}): string {
-  const b = Object.entries(args.balances).map(([p, v]) => `${p}: ₹${v}`).join(', ');
-  return [
-    `${args.competition}: ${args.home} (${args.homeOwner}) ${args.scoreline} ${args.away} (${args.awayOwner})`,
-    `Status ${args.status} · margin ${args.margin} · ₹${args.amount} ${args.winner} ← ${args.loser}`,
-    `Balances after: ${b}${args.singleSource ? ' · SINGLE SOURCE' : ''}`,
-  ].join('\n');
-}

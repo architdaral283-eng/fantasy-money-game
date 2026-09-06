@@ -11,6 +11,7 @@ describe('quiet hours', () => {
   });
 
   it('live through evenings and UCL nights', () => {
+    expect(inQuietHoursAt(new Date('2026-09-10T22:59:00Z'))).toBe(false); // 04:29 IST — last live minute
     expect(inQuietHoursAt(new Date('2026-09-10T18:00:00Z'))).toBe(false); // 23:30 IST
     expect(inQuietHoursAt(new Date('2026-09-10T21:00:00Z'))).toBe(false); // 02:30 IST
     expect(inQuietHoursAt(new Date('2026-09-11T11:00:00Z'))).toBe(false); // 16:30 IST boundary

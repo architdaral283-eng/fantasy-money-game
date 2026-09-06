@@ -1,0 +1,74 @@
+name: keepalive
+
+# WHY THIS EXISTS — DO NOT DELETE.
+#
+# GitHub automatically disables *scheduled* workflows in a public repository
+# after 60 days without repository activity (i.e. without a push). The season
+# runs to May 2027; once the code is stable and nobody commits, poll.yml would
+# silently stop ~60 days after the last push, and with it results, approvals,
+# reminders and the morning brief. Real money is settled off that poller.
+#
+# Toggling the workflow on/off through the Actions API does NOT reset that
+# timer (efrecon/gh-action-keepalive tried it and abandoned it); an actual
+# commit does. So twice a month this job writes a timestamp into
+# .github/.keepalive and pushes it to main. Twice monthly (not monthly) so a
+# single missed run can never leave a >60-day gap.
+#
+# Side effects, all deliberate:
+#   - Commits made with GITHUB_TOKEN never trigger other workflows.
+#   - Vercel sees a push and rebuilds the same lockfile-pinned code. Harmless;
+#     a failed Vercel build never replaces the live deployment. (Optional: a
+#     vercel.json "ignoreCommand" can skip builds for .github-only commits.)
+#   - Your local clone will be behind main by these commits: `git pull` first.
+#
+# If the push fails, the last step DMs the commissioner on Telegram (same
+# TELEGRAM_BOT_TOKEN / TELEGRAM_ALERT_CHAT_ID repository secrets as poll.yml).
+on:
+  schedule:
+    - cron: '17 10 1,15 * *'   # 1st and 15th, 10:17 UTC = 15:47 IST (no football, no polling)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - name: Touch .github/.keepalive and push
+        run: |
+          date -u +'%Y-%m-%dT%H:%M:%SZ' > .github/.keepalive
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/.keepalive
+          git commit -m 'chore(keepalive): keep scheduled polling alive [see .github/workflows/keepalive.yml]'
+          git push origin HEAD:main
+          echo "Pushed keepalive commit $(git rev-parse --short HEAD); scheduled workflows stay enabled for another 60 days."
+
+      # A silent keepalive failure is as serious as a poll failure: nothing else
+      # would tell you until poll-matchdays is auto-disabled ~60 days later.
+      # Same two repository secrets as poll.yml; silent no-op if they are unset.
+      - name: Telegram DM alert (silent if TELEGRAM_BOT_TOKEN / TELEGRAM_ALERT_CHAT_ID unset)
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALERT_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Must never fail: the job is already red, a second red X only confuses.
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_ALERT_CHAT_ID" ]; then
+            echo "::notice::No Telegram alert sent — add TELEGRAM_BOT_TOKEN and TELEGRAM_ALERT_CHAT_ID repository secrets to get failures as a DM."
+            exit 0
+          fi
+          text="$(printf '🚨 keepalive: FAILED — no keepalive commit was pushed.\nIf this stays broken, GitHub disables poll-matchdays 60 days after the last push and results, approvals and reminders stop.\nRe-run: Actions → keepalive → Run workflow.\n%s' "$RUN_URL")"
+          curl -sS --max-time 20 -o /dev/null "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$TELEGRAM_ALERT_CHAT_ID" \
+            --data-urlencode "text=$text" \
+            --data-urlencode 'link_preview_options={"is_disabled":true}' \
+            && echo "Telegram alert sent." \
+            || echo "::warning::Telegram alert could not be sent (wrong bot token / chat id, or api.telegram.org unreachable)"
+          exit 0

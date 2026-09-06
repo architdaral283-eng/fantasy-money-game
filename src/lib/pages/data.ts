@@ -5,13 +5,6 @@ import { generateLeagueFixtures, uclFixtures, bootCheck } from '@/lib/seed/fixtu
 
 export const IST = 'Asia/Kolkata';
 
-export function formatIST(iso: string | null): string {
-  if (!iso) return 'TBC';
-  return new Intl.DateTimeFormat('en-IN', {
-    timeZone: IST, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
-  }).format(new Date(iso));
-}
-
 export function inr(n: number): string {
   const sign = n < 0 ? '−' : n > 0 ? '+' : '';
   return `${sign}₹${Math.abs(n).toLocaleString('en-IN')}`;

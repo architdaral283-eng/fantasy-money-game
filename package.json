@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "seed:check": "npx tsx scripts/boot-check.ts"
+    "seed:check": "npx tsx scripts/boot-check.ts",
+    "backup": "bash scripts/backup.sh"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.6",

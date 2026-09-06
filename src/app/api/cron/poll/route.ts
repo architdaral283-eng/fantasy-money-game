@@ -47,6 +47,34 @@ export async function POST(req: Request) {
   const nowMs = Date.now();
   const summary = { synced: 0, proposed: 0, autoWritten: 0, autoLogged: 0, reminders: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
 
+  // Per-run reads that cannot change mid-run, memoised on first use so an idle
+  // tick (no finished fixture, no reminder due) issues no extra query. A read
+  // that errors is not cached, so the next caller retries exactly as before.
+  let amd3Ratified: boolean | undefined;
+  const amendment3Ratified = async (): Promise<boolean> => {
+    if (amd3Ratified !== undefined) return amd3Ratified;
+    const { data: amd3, error } = await db.from('config').select('value').eq('key', 'amendment_3_auto_write').single();
+    const ratified = (amd3?.value as { status?: string })?.status === 'ratified';
+    if (!error) amd3Ratified = ratified;
+    return ratified;
+  };
+  let architChatIdCache: string | null | undefined;
+  const architChatId = async (): Promise<string | null> => {
+    if (architChatIdCache !== undefined) return architChatIdCache;
+    const { data: archit, error } = await db.from('players').select('telegram_chat_id').eq('id', 'archit').single();
+    const id = ((archit as { telegram_chat_id?: string | null } | null)?.telegram_chat_id) || null;
+    if (!error) architChatIdCache = id;
+    return id;
+  };
+  let clubMapCache: Map<string, { id: string; name: string; owner_id: string }> | undefined;
+  const clubMap = async () => {
+    if (clubMapCache) return clubMapCache;
+    const { data: clubs, error } = await db.from('clubs').select('id,name,owner_id');
+    const m = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
+    if (!error) clubMapCache = m;
+    return m;
+  };
+
   // schedule sync runs when fixtures lack dates or the last sync is >24h old (quota care)
   const { data: lastSync } = await db.from('config').select('value').eq('key', 'last_schedule_sync').single();
   // one-offs never get provider dates — exclude them or sync runs every tick
@@ -157,9 +185,6 @@ export async function POST(req: Request) {
       if (!terminal) continue;
       if (Date.parse(r.kickoffUtc) + 100 * 60 * 1000 > nowMs) continue;
 
-      const homeGoals = swapped ? r.scoreAt90.away : r.scoreAt90.home;
-      const awayGoals = swapped ? r.scoreAt90.home : r.scoreAt90.away;
-      void homeGoals; void awayGoals;
       const proposal = scoreSingleFixture({
         ...r,
         round,
@@ -217,8 +242,7 @@ export async function POST(req: Request) {
       summary.proposed++;
 
       const { requiresApproval } = await import('@/lib/entry/policy');
-      const { data: amd3 } = await db.from('config').select('value').eq('key', 'amendment_3_auto_write').single();
-      const autoOk = !requiresApproval('poller', (amd3?.value as { status?: string })?.status === 'ratified');
+      const autoOk = !requiresApproval('poller', await amendment3Ratified());
       if (autoOk) {
         try {
           const { approveProposal } = await import('@/lib/ledger/writer');
@@ -242,9 +266,9 @@ export async function POST(req: Request) {
           }
           const { TelegramAdapter: TA } = await import('@/lib/notify/channels');
           const tat = process.env.TELEGRAM_BOT_TOKEN ? new TA(process.env.TELEGRAM_BOT_TOKEN) : null;
-          const { data: archit2 } = await db.from('players').select('telegram_chat_id').eq('id', 'archit').single();
-          if (tat && archit2?.telegram_chat_id) {
-            await tat.send(archit2.telegram_chat_id as string, 'result_recorded', { text: `Recorded automatically. ${scoreline}.` }).catch(() => undefined);
+          const architChat = await architChatId();
+          if (tat && architChat) {
+            await tat.send(architChat, 'result_recorded', { text: `Recorded automatically. ${scoreline}.` }).catch(() => undefined);
           }
           continue;
         } catch (e) {
@@ -258,14 +282,14 @@ export async function POST(req: Request) {
       const what = p.isDraw ? 'Draw. ₹0' : `₹${p.amount} ${p.winnerPlayer} takes it from ${p.loserPlayer}`;
       // single-source: no keyboard, force review. Batching: >5 pending sends one summary.
       const { count: pendN } = await db.from('pending_approvals').select('id', { count: 'exact', head: true }).eq('status', 'PENDING');
-      const single = true; // football-data only in this loop; API-Football cross-check lands with cups
+      // football-data only in this loop (single source); API-Football cross-check lands with cups
       if ((pendN ?? 0) > 5) {
         if (!summary.batched) {
           const { TelegramAdapter } = await import('@/lib/notify/channels');
           const tg = process.env.TELEGRAM_BOT_TOKEN ? new TelegramAdapter(process.env.TELEGRAM_BOT_TOKEN) : null;
-          const { data: archit } = await db.from('players').select('telegram_chat_id').eq('id', 'archit').single();
-          if (tg && archit?.telegram_chat_id && (await architAwake(db).catch(() => true))) {
-            await tg.send(archit.telegram_chat_id as string, 'result_approval_request', {
+          const architChat = await architChatId();
+          if (tg && architChat && (await architAwake(db).catch(() => true))) {
+            await tg.send(architChat, 'result_approval_request', {
               text: `${pendN} results waiting. Review all on the site.`,
             }).catch(() => undefined);
           }
@@ -276,8 +300,8 @@ export async function POST(req: Request) {
       // direct Telegram message to Archit only. Single-source: no keyboard, forced review.
       const { TelegramAdapter } = await import('@/lib/notify/channels');
       const tg = process.env.TELEGRAM_BOT_TOKEN ? new TelegramAdapter(process.env.TELEGRAM_BOT_TOKEN) : null;
-      const { data: archit } = await db.from('players').select('telegram_chat_id').eq('id', 'archit').single();
-      if (tg && archit?.telegram_chat_id) {
+      const architChat = await architChatId();
+      if (tg && architChat) {
         try {
           const { data: bals } = await db.from('player_balances').select('id,net_inr');
           const net = new Map(((bals ?? []) as { id: string; net_inr: number }[]).map((b) => [b.id, Number(b.net_inr)]));
@@ -287,7 +311,7 @@ export async function POST(req: Request) {
           }
           const after = ['archit', 'vedant', 'harshal', 'anmol']
             .map((p) => `${p} ${net.get(p) ?? 0 >= 0 ? '+' : '−'}₹${Math.abs(net.get(p) ?? 0).toLocaleString('en-IN')}`).join(' ');
-          const sent = await tg.send(archit.telegram_chat_id as string, 'result_approval_request', {
+          const sent = await tg.send(architChat, 'result_approval_request', {
             text: `${code}: ${scoreline}\n${what} · ${r.terminalStatus} · single source\nAfter: ${after}\nSingle source. Tap only if sure.`,
             buttons: [
               { id: `approve:${approval.id}`, title: 'Approve' },
@@ -312,8 +336,7 @@ export async function POST(req: Request) {
     const f = (sched ?? []).find((x: { id: string }) => x.id === id) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string };
     const when = new Date(f.kickoff_utc).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
     await db.from('fixtures').update({ reminder_sent_at: new Date().toISOString() }).eq('id', id);
-    const { data: clubs2 } = await db.from('clubs').select('id,name,owner_id');
-    const cmap2 = new Map(((clubs2 ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
+    const cmap2 = await clubMap();
     const h2 = cmap2.get(f.home_club_id);
     const a2 = cmap2.get(f.away_club_id);
     const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -333,8 +356,7 @@ export async function POST(req: Request) {
   let prematch = 0;
   if ((soon ?? []).length) {
     const { sendGroup } = await import('@/lib/notify/quiet');
-    const { data: clubs } = await db.from('clubs').select('id,name,owner_id');
-    const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
+    const cmap = await clubMap();
     for (const f of (soon ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string; kickoff_utc: string }[]) {
       const h = cmap.get(f.home_club_id);
       const a = cmap.get(f.away_club_id);

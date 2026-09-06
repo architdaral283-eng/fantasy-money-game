@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { submitManualLine } from '@/lib/entry/submit';
+import { requireCommissioner } from '@/lib/auth/require-commissioner';
 
-/** Manual result entry — thin wrapper; logic lives in lib/entry/submit. */
+/** Manual result entry — Commissioner only (ADMIN_SECRET bearer); logic lives in lib/entry/submit. */
 export async function POST(req: Request) {
+  const denied = requireCommissioner(req);
+  if (denied) return denied;
   try {
     const { line } = (await req.json().catch(() => ({}))) as { line?: string };
     const r = await submitManualLine(supabaseService(), line ?? '', 'web');
