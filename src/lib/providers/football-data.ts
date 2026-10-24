@@ -26,13 +26,31 @@ export interface ScheduleRow {
   homeClubId: string;
   awayClubId: string;
   finished: boolean;
+  /** Raw provider stage (LEAGUE_STAGE, LAST_16, ...). Needed to create knockout
+   *  fixtures: the poller used to hardcode 'League Phase' and so could never
+   *  match, let alone insert, a tie drawn after the seed ran. */
+  stage: string;
 }
 
 /** Normalize a provider stage name to our round. UCL league phase is 'League Stage' in v4. */
 export function normalizeRound(competitionCode: string, stage: string): string {
   if (competitionCode !== 'UCL') return 'League';
   if (/league|group/i.test(stage)) return 'League Phase';
-  return stage;
+  // Knockout stages arrive as LAST_16 / QUARTER_FINALS / ... Humanise them so
+  // the round column and the group messages read properly.
+  const KO: Record<string, string> = {
+    PLAYOFFS: 'Playoff', PLAYOFF_ROUND: 'Playoff',
+    LAST_16: 'Round of 16', ROUND_OF_16: 'Round of 16',
+    QUARTER_FINALS: 'Quarter-final', QUARTER_FINAL: 'Quarter-final',
+    SEMI_FINALS: 'Semi-final', SEMI_FINAL: 'Semi-final',
+    FINAL: 'Final', THIRD_PLACE: 'Third place',
+  };
+  return KO[String(stage).toUpperCase()] ?? stage;
+}
+
+/** True when a round is a knockout stage rather than the league phase. */
+export function isKnockoutRound(round: string): boolean {
+  return /playoff|round of 16|quarter|semi|final/i.test(round);
 }
 
 export class FootballDataOrgProvider implements FootballDataProvider {
@@ -90,6 +108,7 @@ export class FootballDataOrgProvider implements FootballDataProvider {
       out.push({
         providerFixtureId: String(x.id), kickoffUtc: x.utcDate,
         homeClubId, awayClubId, finished: x.status === 'FINISHED',
+        stage: (x as unknown as { stage?: string }).stage ?? '',
       });
     }
     return out;

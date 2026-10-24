@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
-import { FootballDataOrgProvider, normalizeRound } from '@/lib/providers/football-data';
+import { FootballDataOrgProvider, normalizeRound, isKnockoutRound } from '@/lib/providers/football-data';
 import { mappingConfirmed } from '@/lib/providers/team-ids';
 import { scoreSingleFixture, type NormalisedResult } from '@/lib/scoring/engine';
 import { ownerOf } from '@/lib/domain/constants';
@@ -143,7 +143,12 @@ export async function POST(req: Request) {
         const sched = await provider.listSchedule({ competitionCode: code, season: '2026' });
         await db.from('api_call_log').insert({ provider: 'football-data', endpoint: `schedule:${code}` });
         for (const s of sched) {
-          const sRound = code === 'UCL' ? 'League Phase' : 'League';
+          // Use the provider's ACTUAL stage. This used to be hardcoded to
+          // 'League Phase' for UCL, so a tie drawn after the seed ran (every
+          // knockout round: playoff, R16, QF, SF, final) could never be matched
+          // and — because the branch below only UPDATEs — was never created
+          // either. UCL pays 2000 a fixture; a missed R16 tie is a 2000 hole.
+          const sRound = normalizeRound(code, s.stage);
           // exact venue only: each leg is dated by its own provider match.
           // (Never OR both legs + maybeSingle: two rows make maybeSingle
           // return nothing, silently skipping every league pair.)
@@ -152,6 +157,30 @@ export async function POST(req: Request) {
             .eq('home_club_id', s.homeClubId).eq('away_club_id', s.awayClubId)
             .maybeSingle();
           if (fxErr) throw new Error(`fixture lookup: ${fxErr.message}`);
+
+          // CREATE a fixture the seed never knew about. listSchedule already
+          // filters to owned-v-owned (reverseLookup returns null otherwise),
+          // so anything here is in scope. The UNIQUE (competition_id, round,
+          // home, away) constraint makes a double insert impossible.
+          if (!fx) {
+            const sameOwner = ownerOf(s.homeClubId) === ownerOf(s.awayClubId);
+            const { error: insErr } = await db.from('fixtures').insert({
+              competition_id: COMP_ID[code], round: sRound,
+              home_club_id: s.homeClubId, away_club_id: s.awayClubId,
+              kickoff_utc: new Date(s.kickoffUtc).toISOString(),
+              provider_fixture_id: s.providerFixtureId,
+              status: 'SCHEDULED', is_same_owner: sameOwner,
+            });
+            if (insErr && !/duplicate key/i.test(insErr.message)) {
+              summary.errors.push(`insert ${code} ${sRound} ${s.homeClubId} v ${s.awayClubId}: ${insErr.message}`);
+            } else if (!insErr) {
+              diag.scheduled++; summary.synced++;
+              const { sendGroup } = await import('@/lib/notify/quiet');
+              await sendGroup(db, `New fixture drawn: ${s.homeClubId} v ${s.awayClubId} (${COMP_ID[code]}, ${sRound}). ${ownerOf(s.homeClubId)} v ${ownerOf(s.awayClubId)}.${isKnockoutRound(sRound) ? ' Knockout tie — result goes to approval, not auto-write.' : ''}`);
+            }
+            continue;
+          }
+
           if (fx && (Date.parse((fx as { kickoff_utc: string | null }).kickoff_utc ?? '') !== Date.parse(s.kickoffUtc) || !(fx as { provider_fixture_id: string | null }).provider_fixture_id)) {
             const stored = Date.parse((fx as { kickoff_utc: string | null }).kickoff_utc ?? '');
             const moved = !!stored && stored !== Date.parse(s.kickoffUtc);
@@ -255,7 +284,13 @@ export async function POST(req: Request) {
       summary.proposed++;
 
       const { requiresApproval } = await import('@/lib/entry/policy');
-      const autoOk = !requiresApproval('poller', await amendment3Ratified());
+      // Amendment III auto-writes machine-verified results. Knockout ties are
+      // deliberately excluded: two-legged aggregation (and away goals, and
+      // extra time) is an unresolved rules question in the constitution, and
+      // guessing it writes a wrong number into an append-only ledger. These go
+      // to the Commissioner instead.
+      const knockout = isKnockoutRound(String((fixture as { round?: string }).round ?? ''));
+      const autoOk = !knockout && !requiresApproval('poller', await amendment3Ratified());
       if (autoOk) {
         try {
           const { approveProposal } = await import('@/lib/ledger/writer');
@@ -355,6 +390,78 @@ export async function POST(req: Request) {
     await db.from('config').upsert({ key: 'last_schedule_sync', value: { at: new Date().toISOString() } }, { onConflict: 'key' });
   }
 
+  // ── Domestic cups via API-Football ────────────────────────────────────────
+  // football-data's free tier is 12 competitions and carries NONE of the four
+  // domestic cups, which is why every cup in domain/constants has
+  // fdOrgCode: null. API-Football does cover them, team ids for all 16 clubs
+  // are already mapped, and the adapter was written but never wired in.
+  //
+  // SCOPE: this discovers and dates cup ties so they appear on the site and
+  // get a kickoff reminder. It does NOT auto-record cup results — scoring a
+  // two-legged cup tie is the same unresolved rules question as the UCL
+  // knockouts, so results stay on /report, which the constitution already
+  // specifies for cups.
+  //
+  // Free tier is 100 calls/day. This runs only on the daily schedule sync:
+  // 4 calls a day.
+  const CUP_COMPS = ['FA_CUP', 'COPA_DEL_REY', 'COPPA_ITALIA', 'DFB_POKAL'] as const;
+  const CUP_ID: Record<string, string> = {
+    FA_CUP: 'facup', COPA_DEL_REY: 'copadelrey', COPPA_ITALIA: 'coppa', DFB_POKAL: 'dfbpokal',
+  };
+  let cupsFound = 0;
+  if (doScheduleSync && process.env.API_FOOTBALL_KEY) {
+    try {
+      const { count: afToday } = await db.from('api_call_log').select('id', { count: 'exact', head: true })
+        .eq('provider', 'api-football').gte('called_at', new Date(nowMs - 24 * 3600 * 1000).toISOString());
+      const used = afToday ?? 0;
+      const { ApiFootballProvider, apiFootballQuotaOk } = await import('@/lib/providers/api-football');
+      const quota = apiFootballQuotaOk(used, 100 - used);
+      if (!quota.ok) {
+        summary.errors.push(`api-football quota: ${quota.reason}`);
+      } else {
+        const af = new ApiFootballProvider(process.env.API_FOOTBALL_KEY);
+        const { sendGroup } = await import('@/lib/notify/quiet');
+        for (const code of CUP_COMPS) {
+          const sched = await af.listSchedule({ competitionCode: code, season: '2026' });
+          await db.from('api_call_log').insert({ provider: 'api-football', endpoint: `schedule:${code}` });
+          for (const c of sched) {
+            const round = c.stage || 'Cup';
+            const { data: have } = await db.from('fixtures').select('id,kickoff_utc')
+              .eq('competition_id', CUP_ID[code]).eq('round', round)
+              .eq('home_club_id', c.homeClubId).eq('away_club_id', c.awayClubId)
+              .maybeSingle();
+            if (have) {
+              const stored = Date.parse((have as { kickoff_utc: string | null }).kickoff_utc ?? '');
+              if (stored && stored !== Date.parse(c.kickoffUtc)) {
+                await db.from('fixtures').update({
+                  kickoff_utc: new Date(c.kickoffUtc).toISOString(),
+                  reminder_sent_at: null, pre_match_sent_at: null,
+                }).eq('id', (have as { id: string }).id);
+              }
+              continue;
+            }
+            const sameOwner = ownerOf(c.homeClubId) === ownerOf(c.awayClubId);
+            const { error: cupErr } = await db.from('fixtures').insert({
+              competition_id: CUP_ID[code], round,
+              home_club_id: c.homeClubId, away_club_id: c.awayClubId,
+              kickoff_utc: new Date(c.kickoffUtc).toISOString(),
+              provider_fixture_id: c.providerFixtureId,
+              status: 'SCHEDULED', is_same_owner: sameOwner,
+            });
+            if (cupErr && !/duplicate key/i.test(cupErr.message)) {
+              summary.errors.push(`cup insert ${code} ${c.homeClubId} v ${c.awayClubId}: ${cupErr.message}`);
+            } else if (!cupErr) {
+              cupsFound++;
+              await sendGroup(db, `Cup tie drawn: ${c.homeClubId} v ${c.awayClubId} (${CUP_ID[code]}, ${round}). ${ownerOf(c.homeClubId)} v ${ownerOf(c.awayClubId)}. Report the result with /report when it is played.`);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      summary.errors.push(`cups: ${(e as Error).message}`);
+    }
+  }
+
   // 24h reminders — group only, flag FIRST so a hiccup can never re-send
   const { data: sched } = await db.from('fixtures').select('id,status,kickoff_utc,reminder_sent_at,home_club_id,away_club_id,competition_id').eq('status', 'SCHEDULED');
   for (const id of dueReminders((sched ?? []) as { id: string; status: string; kickoff_utc: string | null; reminder_sent_at: string | null }[], nowMs)) {
@@ -392,5 +499,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch });
+  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, cupsFound });
 }

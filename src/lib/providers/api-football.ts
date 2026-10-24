@@ -5,6 +5,7 @@
 //   `extratime` holds goals scored IN extra time or cumulative — the verification
 //   script asserts the interpretation against known historical fixtures.
 import type { FootballDataProvider, FixtureQuery } from './types';
+import type { ScheduleRow } from '@/lib/providers/football-data';
 import type { NormalisedResult, TerminalStatus } from '@/lib/scoring/engine';
 import { TEAM_ID_MAP } from '@/lib/providers/team-ids';
 
@@ -46,6 +47,38 @@ export class ApiFootballProvider implements FootballDataProvider {
       if (n) out.push(n);
     }
     return { results: out, total: rows.length };
+  }
+
+  /**
+   * Upcoming + past ties, scores ignored. listFixtures() cannot be used for this:
+   * normalise() returns null for anything without a terminal status, so a cup tie
+   * that has merely been DRAWN is invisible to it. The four domestic cups are not
+   * on football-data's free tier at all, so this is the only way they can ever
+   * reach the fixtures table.
+   */
+  async listSchedule(q: FixtureQuery): Promise<ScheduleRow[]> {
+    const league = AF_LEAGUE[q.competitionCode];
+    if (!league) return [];
+    const rows = (await this.call(`/fixtures?league=${league}&season=2026`)) as unknown[];
+    const out: ScheduleRow[] = [];
+    for (const r of rows) {
+      const x = r as {
+        fixture: { id: number; date: string; status: { short: string } };
+        league: { round?: string };
+        teams: { home: { id: number }; away: { id: number } };
+      };
+      const homeClubId = reverseLookup(x.teams.home.id);
+      const awayClubId = reverseLookup(x.teams.away.id);
+      if (!homeClubId || !awayClubId) continue; // not an owned-v-owned tie
+      out.push({
+        providerFixtureId: String(x.fixture.id),
+        kickoffUtc: x.fixture.date,
+        homeClubId, awayClubId,
+        finished: ['FT', 'AET', 'PEN'].includes(x.fixture.status.short),
+        stage: x.league.round ?? '',
+      });
+    }
+    return out;
   }
 
   async getFixture(providerFixtureId: string): Promise<NormalisedResult | null> {
