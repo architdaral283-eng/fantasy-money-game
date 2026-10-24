@@ -112,7 +112,31 @@ export async function drainQueue(db: SupabaseClient, fetchPng?: () => Promise<Ar
   }
   let released = 0;
   for (const [dest, items] of byDest) {
-    // queued photos render fresh at release, then send
+    // Resolve the chat once per destination.
+    let chatId: string | null = null;
+    if (dest === 'group') {
+      const { data: g } = await db.from('config').select('value').eq('key', 'telegram_group_chat_id').single();
+      chatId = (g?.value as { id?: string })?.id ?? null;
+    } else if (dest.startsWith('player:')) {
+      const { data: p } = await db.from('players').select('telegram_chat_id').eq('id', dest.slice(7)).single();
+      chatId = (p as { telegram_chat_id?: string } | null)?.telegram_chat_id ?? null;
+    }
+    if (!chatId) continue;
+
+    // TEXTS FIRST, each as its own message, in the order they were raised.
+    // This used to send photos first and glue every text into one "Morning
+    // digest" (released at 16:30, so not even morning) — a held result
+    // arrived as a standings image followed by a mangled copy of itself.
+    for (const item of items.filter((i) => i.template_key !== 'photo')) {
+      const text = item.payload.text ?? item.payload.caption ?? '';
+      try {
+        if (text) await sendHtml(chatId, text);
+        await db.from('message_queue').update({ sent_at: new Date().toISOString() }).eq('id', item.id);
+        released++;
+      } catch { /* next run retries */ }
+    }
+
+    // THEN photos, rendered fresh at release so they show the table as it is now.
     for (const item of items.filter((i) => i.template_key === 'photo')) {
       try {
         if (!fetchPng) continue;
@@ -120,36 +144,14 @@ export async function drainQueue(db: SupabaseClient, fetchPng?: () => Promise<Ar
         const { TelegramAdapter } = await import('@/lib/notify/channels');
         const token = process.env.TELEGRAM_BOT_TOKEN;
         if (!token) continue;
-        const tg = new TelegramAdapter(token);
+        const r = await new TelegramAdapter(token).sendPhoto(chatId, item.payload.caption ?? '', png);
         if (dest === 'group') {
-          const { data: g } = await db.from('config').select('value').eq('key', 'telegram_group_chat_id').single();
-          const gid = (g?.value as { id?: string })?.id;
-          if (gid) {
-            const r = await tg.sendPhoto(gid, item.payload.caption ?? 'Standings', png);
-            await db.from('notifications').insert({ player_id: null, channel: 'telegram', template_key: 'photo', payload: { caption: item.payload.caption }, status: 'SENT', provider_message_id: r.messageId });
-          }
+          await db.from('notifications').insert({ player_id: null, channel: 'telegram', template_key: 'photo', payload: { caption: item.payload.caption }, status: 'SENT', provider_message_id: r.messageId });
         }
         await db.from('message_queue').update({ sent_at: new Date().toISOString() }).eq('id', item.id);
         released++;
       } catch { /* next run retries */ }
     }
-    const texts = items.filter((i) => i.template_key !== 'photo').map((i) => i.payload.text ?? i.payload.caption ?? '').filter(Boolean);
-    if (!texts.length) continue;
-    const digest = `Morning digest\n\n${texts.join('\n\n')}`;
-    try {
-      if (dest === 'group') {
-        const { data: g } = await db.from('config').select('value').eq('key', 'telegram_group_chat_id').single();
-        const gid = (g?.value as { id?: string })?.id;
-        if (gid) await sendHtml(gid, digest);
-      } else if (dest.startsWith('player:')) {
-        const pid = dest.slice(7);
-        const { data: p } = await db.from('players').select('telegram_chat_id').eq('id', pid).single();
-        const chatId = (p as { telegram_chat_id?: string } | null)?.telegram_chat_id;
-        if (chatId) await sendHtml(chatId, digest);
-      }
-      await db.from('message_queue').update({ sent_at: new Date().toISOString() }).in('id', items.map((i) => i.id));
-      released += items.length;
-    } catch { /* next run retries */ }
   }
   return { released };
 }
