@@ -72,4 +72,34 @@ describe('roast selection', () => {
     expect(s).toContain('Draw. No money moves.');
     expect(s).not.toContain('pays');
   });
+
+  it('scorers sit under the score, before the money', () => {
+    const s = statPrefix({ ...ctx, scorers: ['Real Betis: Isco 55\''] });
+    const lines = s.split('\n');
+    expect(lines.indexOf('Real Betis: Isco 55\'')).toBeGreaterThan(lines.indexOf('La Liga'));
+    expect(lines.indexOf('Real Betis: Isco 55\'')).toBeLessThan(lines.indexOf('Vedant pays Harshal ₹500'));
+    expect(statPrefix(ctx)).not.toContain('Isco'); // no scorers, no block
+  });
+});
+
+describe('draws', () => {
+  const draw: RoastContext = {
+    ...ctx, margin: 0, amount: 0, score: '3–3', homeScore: '3–3',
+    homeClub: 'Napoli', awayClub: 'AS Roma', homeOwner: 'Vedant', awayOwner: 'Harshal',
+  };
+  const loserLine = T({ id: 10, body: '{loser} pays {winner} {amount}' });
+  const drawLine = T({ id: 11, target: 'BOTH', body: '{home_owner} and {away_owner}, {score}', conditions: { draw: true } });
+
+  it('a draw never picks a line that names a loser', () => {
+    expect(pickTemplate([loserLine], draw, Date.now(), () => 0.5)).toBeNull();
+    expect(pickTemplate([loserLine, drawLine], draw, Date.now(), () => 0.5)?.id).toBe(11);
+  });
+
+  it('a real result never picks a draw line', () => {
+    expect(pickTemplate([drawLine], ctx, Date.now(), () => 0.5)).toBeNull();
+  });
+
+  it('draw lines name both owners by side', () => {
+    expect(renderBody(drawLine.body, draw)).toBe('Vedant and Harshal, 3–3');
+  });
 });

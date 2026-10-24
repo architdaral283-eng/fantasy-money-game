@@ -139,6 +139,30 @@ export function buildFixtureNotice(n: FixtureNotice): string {
   return block(header, subject, moneyBlock, context.join('\n'), tail);
 }
 
+// ——————————————————————————— scorers ———————————————————————————
+
+export interface ScorerGoal { minute: string; player: string; clubId: string; pen?: boolean; og?: boolean }
+
+/**
+ * "Napoli: F. Anguissa 28', S. McTominay 48' 83'" — one line per club that
+ * scored, home first, each player's goals grouped in match order.
+ */
+export function scorerLines(goals: ScorerGoal[], home: { id: string; name: string }, away: { id: string; name: string }): string[] {
+  const line = (club: { id: string; name: string }): string | null => {
+    const mine = goals.filter((g) => g.clubId === club.id);
+    if (!mine.length) return null;
+    const order: string[] = [];
+    const by = new Map<string, string[]>();
+    for (const g of mine) {
+      const who = g.og ? `${g.player} (og)` : g.player;
+      if (!by.has(who)) { by.set(who, []); order.push(who); }
+      by.get(who)!.push(`${g.minute}${g.pen ? ' (pen)' : ''}`);
+    }
+    return esc(`${club.name}: ${order.map((w) => `${w} ${by.get(w)!.join(' ')}`).join(', ')}`);
+  };
+  return [line(home), line(away)].filter((x): x is string => x !== null);
+}
+
 // ——————————————————————————— fixture list ———————————————————————————
 
 export interface ListFixture {

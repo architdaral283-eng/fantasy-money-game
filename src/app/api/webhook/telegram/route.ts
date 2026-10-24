@@ -9,7 +9,7 @@ import { parseCommand, parseOneLine } from '@/lib/parse/one-line';
 import { submitManualLine } from '@/lib/entry/submit';
 import { buildPinText } from '@/lib/notify/panel';
 import { commissionerHeaders, telegramWebhookAuthed } from '@/lib/auth/require-commissioner';
-import { buildHelp, buildRules, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, block, head, signed, money, pre, cols, esc } from '@/lib/notify/format';
+import { buildHelp, buildRules, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, block, head, signed, money, pre, cols, esc, scorerLines } from '@/lib/notify/format';
 import { istClock, istDay } from '@/lib/notify/fixture-notice';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app';
@@ -462,7 +462,7 @@ async function roastContextFor(db: ReturnType<typeof supabaseService>, fixtureId
   const { activeLosingStreak } = await import('@/lib/stats/projections');
   const [{ data: fx }, { data: res }, { data: clubs }, { data: players }, { data: bals }, { data: wld }, { data: led }, { data: dossiers }, { data: derbies }] = await Promise.all([
     db.from('fixtures').select('id,competition_id,home_club_id,away_club_id').eq('id', fixtureId).single(),
-    db.from('results').select('h90,a90,terminal_status').eq('fixture_id', fixtureId).maybeSingle(),
+    db.from('results').select('h90,a90,terminal_status,raw_payload').eq('fixture_id', fixtureId).maybeSingle(),
     db.from('clubs').select('id,name,league,owner_id,draft_pick'),
     db.from('players').select('id,name'),
     db.from('player_balances').select('id,net_inr'),
@@ -473,7 +473,7 @@ async function roastContextFor(db: ReturnType<typeof supabaseService>, fixtureId
   ]);
   if (!fx || !res) return null;
   const F = fx as { competition_id: string; home_club_id: string; away_club_id: string };
-  const R = res as { h90: number; a90: number; terminal_status: string };
+  const R = res as { h90: number; a90: number; terminal_status: string; raw_payload?: { goals?: import('@/lib/notify/format').ScorerGoal[] } | null };
   const cmap = new Map(((clubs ?? []) as { id: string; name: string; league: string; owner_id: string; draft_pick: number }[]).map((c) => [c.id, c]));
   const pmap = new Map(((players ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
   const nets: Record<string, number> = {};
@@ -519,7 +519,8 @@ async function roastContextFor(db: ReturnType<typeof supabaseService>, fixtureId
     awayClub: { id: away.id, name: away.name, pick: away.draft_pick, owner: away.owner_id, ownerName: pmap.get(away.owner_id) ?? away.owner_id, league: away.league },
     homeGoals: R.h90, awayGoals: R.a90,
     competition: (comp as { name?: string } | null)?.name ?? F.competition_id,
-    amount: Math.abs(delta[homeWon ? home.owner_id : away.owner_id] ?? 500),
+    // a draw moves nothing; the old `?? 500` fallback priced every draw at ₹500
+    amount: R.h90 === R.a90 ? 0 : Math.abs(delta[homeWon ? home.owner_id : away.owner_id] ?? 500),
     derbyId: derby?.id ?? null,
     dossier: { marquee: doss?.marquee ?? 'the marquee signing', manager: doss?.manager ?? 'the manager' },
     nets, fixtureDelta: delta, h2h,
@@ -528,6 +529,7 @@ async function roastContextFor(db: ReturnType<typeof supabaseService>, fixtureId
     rankOfLoser: order.indexOf(loserId) + 1,
     isShootout: R.terminal_status === 'PEN',
     isLeadChange: leadChange,
+    scorers: scorerLines(R.raw_payload?.goals ?? [], { id: home.id, name: home.name }, { id: away.id, name: away.name }),
   });
   return { ctx, loserId };
 }

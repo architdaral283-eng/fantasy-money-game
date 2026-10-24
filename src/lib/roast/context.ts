@@ -17,6 +17,7 @@ export interface CtxInput {
   rankOfLoser: number;
   isShootout: boolean;
   isLeadChange: boolean;
+  scorers?: string[];
 }
 
 export function buildContext(inp: CtxInput): RoastContext {
@@ -38,6 +39,8 @@ export function buildContext(inp: CtxInput): RoastContext {
     // home-first scoreline for the header; `score` stays winner-first for slots
     homeClub: inp.homeClub.name, awayClub: inp.awayClub.name,
     homeScore: `${inp.homeGoals}–${inp.awayGoals}`,
+    homeOwner: inp.homeClub.ownerName, awayOwner: inp.awayClub.ownerName,
+    scorers: inp.scorers,
     loserPick: loser.pick, winnerPick: winner.pick,
     // aWins/bWins come from an arbitrary Set iteration order while `leader` is
     // computed separately, so printing them raw could read "2-1 to Anmol" when

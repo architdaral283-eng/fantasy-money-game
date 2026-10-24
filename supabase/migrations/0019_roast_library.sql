@@ -24,7 +24,9 @@
 -- SEVERITY 3 is gated behind margin>=3 / derby / upset by severityOk().
 
 CREATE UNIQUE INDEX IF NOT EXISTS roast_templates_body_md5_uniq ON roast_templates (md5(body));
-UPDATE roast_templates SET retired = true WHERE conditions->>'lib' IS DISTINCT FROM '0019';
+-- Retire everything older than this library. Later libraries (0020 draw lines)
+-- are spared, so re-running this file can never wipe them.
+UPDATE roast_templates SET retired = true WHERE coalesce(conditions->>'lib', '') NOT IN ('0019', '0020');
 
 INSERT INTO roast_templates (body, target, scope, club_id, derby_id, conditions, severity, weight) VALUES
 

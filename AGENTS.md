@@ -147,6 +147,32 @@ Non-negotiable:
 `npm run preview:messages` prints every shape with sample data. Run it after any
 format change and read the output before shipping.
 
+## Two result sources
+
+- **football-data.org** is primary. Its free tier can be hours late marking a
+  match FINISHED (Napoli 3–3 Roma, 24 Oct 2026: five hours and counting).
+- **ESPN's public scoreboard** (`src/lib/providers/espn.ts`) is the fallback.
+  For any of our fixtures still SCHEDULED 105+ minutes after kickoff that
+  football-data has not returned as finished, a completed *full-time* ESPN
+  result joins the same `results` array and goes through the same scoring and
+  approval path. AET/penalties never come from ESPN.
+- ESPN-sourced payloads carry `provider: 'espn'`. When football-data catches up
+  and disagrees, Archit gets one DM (`config` key `xcheck:<fixture id>`).
+  Nothing is rewritten automatically — the ledger is append-only.
+- ESPN also supplies **goal scorers** (`payload.goals` → `results.raw_payload`
+  → `scorerLines()`), kept only when they add up to the score being written.
+  Display only. If ESPN is down, the message posts without them.
+- ESPN team ids live in `TEAM_ID_MAP.espn`. Same rule as the others: no name
+  matching at runtime.
+
+## Draws
+
+A draw has no loser. `condMatch()` gives draws only lines with
+`conditions.draw = true` (0020) and keeps those lines away from real results.
+Draw lines use `{home_owner} {away_owner} {home_club} {away_club}`, never
+`{loser}`/`{winner}`/`{amount}`. 0019's retire step spares lib 0020 — if a
+later library adds its own retire step, it must spare 0020 too.
+
 ## Regression traps — things that look like cleanup but are not
 
 - **`.github/workflows/keepalive.yml`** looks like pointless commit noise. It is

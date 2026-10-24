@@ -8,6 +8,7 @@ import { fanOutText } from '@/lib/notify/send';
 import { dueReminders } from '@/lib/notify/send';
 import { drainQueue, architAwake, sendGroup } from '@/lib/notify/quiet';
 import { fixtureNotice, isTodayIST } from '@/lib/notify/fixture-notice';
+import { espnScoreboard, espnDateOf, findMatch, toNormalised, goalsMatching, type EspnMatch, type Goal } from '@/lib/providers/espn';
 
 function authed(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -46,7 +47,7 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoWritten: 0, autoLogged: 0, reminders: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
+  const summary = { synced: 0, proposed: 0, autoWritten: 0, autoLogged: 0, reminders: 0, espnFallback: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
 
   // Per-run reads that cannot change mid-run, memoised on first use so an idle
   // tick (no finished fixture, no reminder due) issues no extra query. A read
@@ -197,6 +198,40 @@ export async function POST(req: Request) {
       }
     }
 
+    // ——— ESPN: late results + goal scorers ———
+    // Every fixture of ours in this competition that kicked off 105+ minutes
+    // ago and is still SCHEDULED. Where football-data has already returned it
+    // as finished, ESPN only contributes the scorers. Where it has NOT — its
+    // free tier sat on Napoli 3–3 Roma for five hours — ESPN's completed
+    // full-time result joins `results` and goes through exactly the same
+    // scoring and approval path below. One ESPN call per league per date.
+    const goalsByFixture = new Map<string, Goal[]>();
+    try {
+      const espnCache = new Map<string, Promise<EspnMatch[]>>();
+      const espnFor = (iso: string) => {
+        const key = espnDateOf(iso);
+        if (!espnCache.has(key)) espnCache.set(key, espnScoreboard(COMP_ID[code], key));
+        return espnCache.get(key)!;
+      };
+      const { data: due } = await db.from('fixtures').select('id,home_club_id,away_club_id,kickoff_utc,round')
+        .eq('competition_id', COMP_ID[code]).eq('status', 'SCHEDULED')
+        .lt('kickoff_utc', new Date(nowMs - 105 * 60 * 1000).toISOString())
+        .gte('kickoff_utc', new Date(nowMs - 7 * 24 * 3600 * 1000).toISOString());
+      for (const f of (due ?? []) as { id: string; home_club_id: string; away_club_id: string; kickoff_utc: string; round: string | null }[]) {
+        const m = findMatch(await espnFor(f.kickoff_utc), f.home_club_id, f.away_club_id, f.kickoff_utc);
+        if (!m) continue;
+        goalsByFixture.set(f.id, m.goals);
+        const fdHasIt = results.some((r) =>
+          new Set([r.homeClubId, r.awayClubId, f.home_club_id, f.away_club_id]).size === 2
+          && Math.abs(Date.parse(r.kickoffUtc) - Date.parse(f.kickoff_utc)) < 36 * 3600 * 1000);
+        if (fdHasIt) continue;
+        const n = toNormalised(m, code, f.round ?? 'League');
+        if (n) { results.push(n); summary.espnFallback++; }
+      }
+    } catch (e) {
+      summary.errors.push(`espn ${code}: ${(e as Error).message}`);
+    }
+
     for (const r of results) {
       // match to our fixture row (named order, else reverse)
       const compId = COMP_ID[code];
@@ -216,11 +251,42 @@ export async function POST(req: Request) {
       if (!fixture) continue; // not one of our 69 (cup ties join once drawn)
       diag.matched++;
       // sync date + provider id
-      if (!fixture.kickoff_utc || !fixture.provider_fixture_id) {
+      if (r.provider !== 'espn' && (!fixture.kickoff_utc || !fixture.provider_fixture_id)) {
         await db.from('fixtures').update({ kickoff_utc: new Date(r.kickoffUtc).toISOString(), provider_fixture_id: r.providerFixtureId ?? null }).eq('id', fixture.id);
         summary.synced++;
       }
-      if (fixture.status !== 'SCHEDULED') continue;
+      if (fixture.status !== 'SCHEDULED') {
+        // ESPN wrote it first; now football-data has caught up. If the two
+        // disagree, Archit hears about it once. Nothing is changed
+        // automatically: the ledger is append-only and /correct exists.
+        if (fixture.status === 'RECORDED' && r.provider !== 'espn' && (r.terminalStatus === 'FT' || r.terminalStatus === 'AET' || r.terminalStatus === 'PEN')
+          && Date.parse(r.kickoffUtc) > nowMs - 7 * 24 * 3600 * 1000) {
+          try {
+            const { data: rec } = await db.from('results').select('h90,a90,raw_payload').eq('fixture_id', fixture.id).maybeSingle();
+            const recP = (rec as { raw_payload?: { provider?: string } } | null)?.raw_payload;
+            const fdH = swapped ? r.scoreAt90.away : r.scoreAt90.home;
+            const fdA = swapped ? r.scoreAt90.home : r.scoreAt90.away;
+            const R0 = rec as { h90: number; a90: number } | null;
+            if (R0 && recP?.provider === 'espn' && (R0.h90 !== fdH || R0.a90 !== fdA)) {
+              const key = `xcheck:${fixture.id}`;
+              const { data: seen } = await db.from('config').select('key').eq('key', key).maybeSingle();
+              if (!seen) {
+                await db.from('config').insert({ key, value: { espn: [R0.h90, R0.a90], footballData: [fdH, fdA], at: new Date().toISOString() } });
+                const { TelegramAdapter: TX } = await import('@/lib/notify/channels');
+                const ac = await architChatId();
+                if (process.env.TELEGRAM_BOT_TOKEN && ac) {
+                  await new TX(process.env.TELEGRAM_BOT_TOKEN).send(ac, 'result_mismatch', {
+                    text: `Score mismatch: ${fixture.home_club_id} v ${fixture.away_club_id}. Recorded ${R0.h90}–${R0.a90} from ESPN; football-data now says ${fdH}–${fdA}. Check it, and /correct if ESPN was wrong.`,
+                  }).catch(() => undefined);
+                }
+              }
+            }
+          } catch (e) {
+            summary.errors.push(`cross-check ${fixture.id}: ${(e as Error).message}`);
+          }
+        }
+        continue;
+      }
       // finished? terminal status AND past kickoff+100min (provider may lag)
       const terminal = r.terminalStatus === 'FT' || r.terminalStatus === 'AET' || r.terminalStatus === 'PEN';
       if (!terminal) continue;
@@ -249,7 +315,7 @@ export async function POST(req: Request) {
         // ₹0, no W/L/D, no ledger — safe to log directly (nothing to approve)
         await db.from('results').insert({
           fixture_id: fixture.id, h90: r.scoreAt90.home, a90: r.scoreAt90.away,
-          terminal_status: r.terminalStatus, provider: 'football-data',
+          terminal_status: r.terminalStatus, provider: r.provider ?? 'football-data',
           raw_payload: { providerFixtureId: r.providerFixtureId },
         });
         await db.from('fixtures').update({ status: 'RECORDED' }).eq('id', fixture.id);
@@ -271,6 +337,13 @@ export async function POST(req: Request) {
           winnerPlayer: proposal.winnerPlayer, loserPlayer: proposal.loserPlayer,
           isDraw: proposal.isDraw, margin: proposal.margin, amount: proposal.amount,
           kind: proposal.kind, terminalStatus: r.terminalStatus,
+          provider: r.provider ?? 'football-data',
+          // scorers are display-only; kept only if they add up to the score being written
+          goals: goalsMatching(
+            goalsByFixture.get(fixture.id) ?? [],
+            fixture.home_club_id, swapped ? r.scoreAt90.away : r.scoreAt90.home,
+            fixture.away_club_id, swapped ? r.scoreAt90.home : r.scoreAt90.away,
+          ),
         },
         computed_transfers: proposal.transfers.map((t) => ({
           ...t, fixture_id: fixture.id,
@@ -369,7 +442,7 @@ export async function POST(req: Request) {
             net.set(t.to, (net.get(t.to) ?? 0) + t.amount);
           }
           const after = ['archit', 'vedant', 'harshal', 'anmol']
-            .map((p) => `${p} ${net.get(p) ?? 0 >= 0 ? '+' : '−'}₹${Math.abs(net.get(p) ?? 0).toLocaleString('en-IN')}`).join(' ');
+            .map((p) => `${p} ${(net.get(p) ?? 0) >= 0 ? '+' : '−'}₹${Math.abs(net.get(p) ?? 0).toLocaleString('en-IN')}`).join(' ');
           const sent = await tg.send(architChat, 'result_approval_request', {
             text: `${code}: ${scoreline}\n${what} · ${r.terminalStatus} · single source\nAfter: ${after}\nSingle source. Tap only if sure.`,
             buttons: [

@@ -11,6 +11,10 @@ export interface RoastContext {
   streakLosses: number; marquee: string; manager: string; rank: number;
   isUpset: boolean; isThrashing: boolean; derbyId: string | null;
   isShootout: boolean; isStreak: boolean; isLeadChange: boolean;
+  /** Owner names by side. In a draw there is no winner or loser, so draw lines use these. */
+  homeOwner?: string; awayOwner?: string;
+  /** Pre-formatted scorer lines (format.ts scorerLines). Absent when unknown. */
+  scorers?: string[];
 }
 
 export interface RoastTemplate {
@@ -28,6 +32,10 @@ const DAY = 864e5;
 
 function condMatch(t: RoastTemplate, ctx: RoastContext): boolean {
   const c = t.conditions;
+  // A draw has no loser. Every non-draw line names one, so a 3–3 would have
+  // called whoever happened to be the home owner the loser of a game nobody
+  // lost. Draws get draw lines only; results get result lines only.
+  if ((ctx.margin === 0) !== (c.draw === true)) return false;
   if (c.margin_min != null && !(ctx.margin >= (c.margin_min as number))) return false;
   if (c.margin_max != null && !(ctx.margin <= (c.margin_max as number))) return false;
   if (c.competitions != null && !((c.competitions as string[]).includes(ctxComp(ctx)))) return false;
@@ -109,6 +117,8 @@ export function renderBody(body: string, ctx: RoastContext): string {
     owed: `₹${ctx.owed.toLocaleString('en-IN')}`,
     streak: streakWord, marquee: ctx.marquee, manager: ctx.manager,
     rank: String(ctx.rank),
+    home_owner: ctx.homeOwner ?? ctx.loser, away_owner: ctx.awayOwner ?? ctx.winner,
+    home_club: ctx.homeClub, away_club: ctx.awayClub,
   };
   return body.replace(/\$?\{(\w+)\}/g, (m, k) => slots[k] ?? m);
 }
@@ -134,6 +144,7 @@ export function statPrefix(ctx: RoastContext): string {
   return [
     `${ctx.homeClub} ${ctx.homeScore} ${ctx.awayClub}`,
     ctx.competition,
+    ...(ctx.scorers?.length ? ['', ...ctx.scorers] : []),
     '',
     money,
     '',
