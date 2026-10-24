@@ -123,7 +123,7 @@ template literal in a route.
     <blank>
     money block            — who pays whom, or the stake
     <blank>
-    context / needle       — head to head, standings, one line of abuse
+    context                — head to head, standings
 
 Non-negotiable:
 
@@ -140,8 +140,9 @@ Non-negotiable:
 - The three fixture announcements (24h reminder, 30-minute warning, drawn tie)
   all render through `fixtureNotice()` in `src/lib/notify/fixture-notice.ts`.
   One function, so they cannot drift apart again.
-- Pre-match needles live in `src/lib/notify/needle.ts`, selected deterministically
-  from the fixture id so a retry never posts a different jab for the same match.
+- **No taunt before a result.** Reminders, warnings and drawn-tie notices carry
+  the fixture, the money and the head to head — nothing else. The roast library
+  fires when money actually moves, never on a fixture that has not been played.
 
 `npm run preview:messages` prints every shape with sample data. Run it after any
 format change and read the output before shipping.

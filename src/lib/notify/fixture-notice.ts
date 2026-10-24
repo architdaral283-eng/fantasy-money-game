@@ -4,7 +4,6 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildFixtureNotice } from '@/lib/notify/format';
-import { preMatchNeedle } from '@/lib/notify/needle';
 import { h2hTally, h2hText } from '@/lib/stats/h2h';
 
 export interface NoticeFixture {
@@ -61,7 +60,6 @@ export async function fixtureNotice(
     ((wld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[]),
   );
 
-  const seed = f.id ?? `${f.competition_id}:${f.home_club_id}:${f.away_club_id}`;
   const sameOwner = oa !== '' && oa === ob;
 
   return buildFixtureNotice({
@@ -79,6 +77,6 @@ export async function fixtureNotice(
     netA: sameOwner ? null : netA,
     netB: sameOwner ? null : netB,
     mins: mins ?? null,
-    needle: sameOwner ? 'Same owner. No money moves, so nobody gets to gloat.' : preMatchNeedle(seed, aName, bName, netA, netB),
+    sameOwner,
   });
 }

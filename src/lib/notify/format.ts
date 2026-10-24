@@ -7,7 +7,7 @@
 //   <blank>
 //   money block
 //   <blank>
-//   context / needle
+//   context              — head to head, standings
 //
 // Rules, learned the hard way:
 //  - never print a raw id (`anmol`, `laliga`) — resolve to a name first
@@ -108,7 +108,7 @@ export interface FixtureNotice {
   netA?: number | null;
   netB?: number | null;
   mins?: number | null;      // prematch only
-  needle?: string | null;
+  sameOwner?: boolean;       // both clubs owned by the same player: no money moves
 }
 
 /** The day-before notice, the 30-minute warning and a freshly drawn cup tie. */
@@ -122,7 +122,9 @@ export function buildFixtureNotice(n: FixtureNotice): string {
     .filter(Boolean).join(' · ');
 
   const subject = `${esc(n.home)} v ${esc(n.away)}\n${esc(where)}`;
-  const moneyBlock = `${esc(n.ownerA)} v ${esc(n.ownerB)}\n${STAKE_LINE}`;
+  const moneyBlock = n.sameOwner
+    ? `${esc(n.ownerA)} owns both. Nothing moves.`
+    : `${esc(n.ownerA)} v ${esc(n.ownerB)}\n${STAKE_LINE}`;
 
   const context: string[] = [];
   if (n.h2h) context.push(`Head to head: ${esc(n.h2h)}`);
@@ -133,7 +135,8 @@ export function buildFixtureNotice(n: FixtureNotice): string {
     ? 'No date yet. It shows up in /next the moment the provider gives one.'
     : null;
 
-  return block(header, subject, moneyBlock, context.join('\n'), n.needle ? esc(n.needle) : null, tail);
+  // No taunt before a result. The roast lands when the money actually moves.
+  return block(header, subject, moneyBlock, context.join('\n'), tail);
 }
 
 // ——————————————————————————— fixture list ———————————————————————————

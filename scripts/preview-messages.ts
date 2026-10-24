@@ -4,7 +4,6 @@ import {
   buildFixtureNotice, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, buildHelp, buildRules,
 } from '../src/lib/notify/format';
 import { buildBriefText, buildPinText } from '../src/lib/notify/panel';
-import { preMatchNeedle } from '../src/lib/notify/needle';
 
 const show = (title: string, body: string) => {
   console.log('\n' + '─'.repeat(60));
@@ -19,9 +18,9 @@ const fixture = {
   h2h: 'Anmol leads 3–1', netA: 1500, netB: -500,
 };
 
-show('REMINDER — day before', buildFixtureNotice({ ...fixture, kind: 'tomorrow', needle: preMatchNeedle('fx-demo', 'Anmol', 'Vedant', 1500, -500) }));
-show('PRE-MATCH — 30 minutes', buildFixtureNotice({ ...fixture, kind: 'prematch', mins: 28, needle: preMatchNeedle('fx-demo2', 'Anmol', 'Vedant', 1500, -500) }));
-show('CUP TIE DRAWN — no date yet', buildFixtureNotice({ ...fixture, kind: 'drawn', compId: 'facup', timeIST: null, dateIST: null, round: 'Quarter-final', needle: preMatchNeedle('fx-demo3', 'Anmol', 'Vedant', 1500, -500) }));
+show('REMINDER — day before', buildFixtureNotice({ ...fixture, kind: 'tomorrow'}));
+show('PRE-MATCH — 30 minutes', buildFixtureNotice({ ...fixture, kind: 'prematch', mins: 28}));
+show('CUP TIE DRAWN — no date yet', buildFixtureNotice({ ...fixture, kind: 'drawn', compId: 'facup', timeIST: null, dateIST: null, round: 'Quarter-final'}));
 show('09:00 BRIEF', buildBriefText([
   { home: 'Barcelona', away: 'Real Madrid', compId: 'laliga', ownerA: 'Anmol', ownerB: 'Vedant', whenIST: '01:30' },
   { home: 'Arsenal', away: 'Inter', compId: 'ucl', ownerA: 'Archit', ownerB: 'Harshal', whenIST: '23:15' },
@@ -49,5 +48,3 @@ show('PINNED PANEL', buildPinText(
    { name: 'Vedant', net: -1000, w: 4, l: 6, d: 1 }, { name: 'Anmol', net: -2000, w: 2, l: 8, d: 1 }],
   14, 63, { home: 'Barcelona', away: 'Real Madrid', ownerA: 'Anmol', ownerB: 'Vedant', whenIST: '01:30' }, '21:14',
 ));
-console.log('\nNeedle sampler:');
-for (let i = 0; i < 6; i++) console.log(' • ' + preMatchNeedle(`seed-${i}`, 'Anmol', 'Vedant', i % 2 ? 1500 : 0, i % 2 ? -500 : 0));

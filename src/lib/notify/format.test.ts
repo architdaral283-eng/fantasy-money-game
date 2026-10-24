@@ -3,7 +3,6 @@ import {
   esc, money, signed, compName, compShort, block, head, cols,
   buildFixtureNotice, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, buildHelp, buildRules,
 } from '@/lib/notify/format';
-import { preMatchNeedle, NEEDLE_COUNT } from '@/lib/notify/needle';
 import { h2hTally, h2hText } from '@/lib/stats/h2h';
 
 describe('primitives', () => {
@@ -39,7 +38,7 @@ describe('fixture notice', () => {
     h2h: 'Anmol leads 3–1', netA: 1500, netB: -500,
   };
   it('reads as a block, not a sentence', () => {
-    const t = buildFixtureNotice({ ...base, kind: 'tomorrow', needle: 'Anmol is about to widen the gap.' });
+    const t = buildFixtureNotice({ ...base, kind: 'tomorrow' });
     expect(t.startsWith('TOMORROW · 01:30 IST')).toBe(true);
     expect(t).toContain('Barcelona v Real Madrid');
     expect(t).toContain('La Liga · Sun 26 Oct');
@@ -50,6 +49,11 @@ describe('fixture notice', () => {
     // the old one-liner's tells, all gone
     expect(t).not.toContain('(laliga)');
     expect(t).not.toContain('₹1000');
+  });
+  it('says nothing moves when one player owns both clubs', () => {
+    const t = buildFixtureNotice({ ...base, kind: 'tomorrow', ownerB: 'Anmol', sameOwner: true });
+    expect(t).toContain('Anmol owns both. Nothing moves.');
+    expect(t).not.toContain('₹500 on it');
   });
   it('counts down on the 30-minute warning and drops the date', () => {
     const t = buildFixtureNotice({ ...base, kind: 'prematch', mins: 28 });
@@ -100,26 +104,6 @@ describe('lists', () => {
     expect(buildHelp(false)).not.toContain('/pending');
     expect(buildHelp(true)).toContain('/pending');
     expect(buildRules()).toContain('₹1,000 from the loser');
-  });
-});
-
-describe('pre-match needle', () => {
-  it('is deterministic per fixture and fills every slot', () => {
-    const a = preMatchNeedle('fx-1', 'Anmol', 'Vedant', 1500, -500);
-    expect(preMatchNeedle('fx-1', 'Anmol', 'Vedant', 1500, -500)).toBe(a);
-    expect(a).not.toMatch(/\{\w+\}/);
-    expect(a).toMatch(/Anmol|Vedant/);
-  });
-  it('names the leader when there is a gap, stays neutral when level', () => {
-    const gapped = preMatchNeedle('fx-7', 'Anmol', 'Vedant', 2000, 0);
-    expect(gapped).toMatch(/₹2,000|Anmol|Vedant/);
-    const level = preMatchNeedle('fx-7', 'Anmol', 'Vedant', 0, 0);
-    expect(level).not.toMatch(/\{\w+\}/);
-  });
-  it('has a library worth having', () => {
-    expect(NEEDLE_COUNT).toBeGreaterThanOrEqual(20);
-    const seen = new Set(Array.from({ length: 40 }, (_, i) => preMatchNeedle(`f${i}`, 'A', 'B', 500, 0)));
-    expect(seen.size).toBeGreaterThan(5);
   });
 });
 
