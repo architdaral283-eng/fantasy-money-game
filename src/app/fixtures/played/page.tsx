@@ -1,5 +1,6 @@
 'use client';
 import { clubName, playerName } from '@/lib/pages/data';
+import { ownerOf } from '@/lib/domain/constants';
 import { useLiveData } from '@/lib/pages/live';
 
 const COMP: Record<string, string> = {
@@ -12,8 +13,11 @@ export default function Played() {
   const resByFx = new Map(results.map((r) => [r.fixture_id, r]));
   const played = fixtures.filter((f) => f.status === 'RECORDED');
 
-  const winnerOf = (fxId: string): string => {
-    const w = wld.find((r) => r.fixture_id === fxId && r.outcome === 'W');
+  // A same-owner fixture has no W/L/D row and moves no money. That is not a
+  // draw — labelling Real Madrid 4-1 Leipzig "Draw" was simply wrong.
+  const winnerOf = (f: { id: string; home_club_id: string; away_club_id: string }): string => {
+    if (ownerOf(f.home_club_id) === ownerOf(f.away_club_id)) return 'Same owner';
+    const w = wld.find((r) => r.fixture_id === f.id && r.outcome === 'W');
     return w ? playerName(w.player_id) : 'Draw';
   };
   const amountOf = (fxId: string): string => {
@@ -38,7 +42,7 @@ export default function Played() {
                   <td>{COMP[f.competition_id] ?? f.competition_id}</td>
                   <td>{clubName(f.home_club_id)} v {clubName(f.away_club_id)}</td>
                   <td className="num">{r ? `${r.h90}-${r.a90}` : '—'}</td>
-                  <td>{winnerOf(f.id)}</td>
+                  <td>{winnerOf(f)}</td>
                   <td className="num">{amountOf(f.id)}</td>
                 </tr>
               );

@@ -85,10 +85,23 @@ export async function POST(req: Request) {
   const doScheduleSync = (undated ?? 0) > 0 || nowMs - lastMs > 24 * 3600 * 1000;
 
   // live window: only competitions with a fixture near kickoff get polled.
-  // Anything finished is inside this window by the kickoff+100min rule.
+  //
+  // The lookback used to be 5 hours, on the assumption that a 5-minute cron
+  // would always catch a finished fixture inside it. That assumption broke on
+  // 24 Oct 2026: GitHub throttled the schedule to ~3 runs/day, football-data's
+  // free tier had not marked Aston Villa 2-1 Man City as FT when the single
+  // in-window poll ran 53 min after full time, and by the next poll the fixture
+  // had aged past now-5h. Its competition stopped being polled, so the result
+  // was never recorded and could never be recovered automatically.
+  //
+  // A SCHEDULED fixture whose kickoff has passed is BY DEFINITION unrecorded
+  // and still needs attention, so the lookback is now 7 days. This only widens
+  // which competitions get polled (<=5 calls per tick), and it self-limits:
+  // once a fixture is RECORDED it leaves the window, and anything older than a
+  // week is a human problem (/report), not a polling one.
   const { data: live } = await db.from('fixtures').select('competition_id,kickoff_utc')
     .eq('status', 'SCHEDULED')
-    .gte('kickoff_utc', new Date(nowMs - 5 * 3600 * 1000).toISOString())
+    .gte('kickoff_utc', new Date(nowMs - 7 * 24 * 3600 * 1000).toISOString())
     .lte('kickoff_utc', new Date(nowMs + 15 * 60 * 1000).toISOString());
   const liveCodes = new Set(((live ?? []) as { competition_id: string }[]).map((f) => f.competition_id));
   const codeOf: Record<string, string> = { epl: 'EPL', laliga: 'LA_LIGA', bundesliga: 'BUNDESLIGA', seriea: 'SERIE_A', ucl: 'UCL' };
