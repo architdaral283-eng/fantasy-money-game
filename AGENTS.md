@@ -112,6 +112,40 @@ Cleanup: removed `/roastadd`, `/roastkill`, `/roaststats` (requested twice
 during the build, only hidden from `/help`, never removed). Added
 `scripts/backup.sh`, `supabase/migrations/0017_indexes.sql`, `!.env.example`.
 
+## Message format — every outbound message goes through src/lib/notify/format.ts
+
+There is one house style and one place that implements it. Do not hand-roll a
+template literal in a route.
+
+    HEADER LINE (caps, optional · subtitle)
+    <blank>
+    subject block          — the fixture, the club, the player
+    <blank>
+    money block            — who pays whom, or the stake
+    <blank>
+    context / needle       — head to head, standings, one line of abuse
+
+Non-negotiable:
+
+- **Never print a raw id.** `anmol`, `laliga`, `man-city` are database keys.
+  Resolve through `player_balances.name`, `competitions.name`, `clubs.name`
+  before it reaches a human. `compName()`/`compShort()` have a hardcoded
+  fallback for every competition so a missing join still reads correctly.
+- **Every rupee figure goes through `money()` or `signed()`.** `₹1000` is a bug;
+  `₹1,000` is the format. Negatives use U+2212 (`−₹500`), never a hyphen.
+- **Scores and ranges use an en dash** (`2–1`, `leads 3–1`).
+- **Tables live inside `<pre>`** via `pre(esc(...))`. parse_mode is HTML, so
+  anything interpolated is `esc()`d — a club name with `&` would otherwise kill
+  the whole message silently.
+- The three fixture announcements (24h reminder, 30-minute warning, drawn tie)
+  all render through `fixtureNotice()` in `src/lib/notify/fixture-notice.ts`.
+  One function, so they cannot drift apart again.
+- Pre-match needles live in `src/lib/notify/needle.ts`, selected deterministically
+  from the fixture id so a retry never posts a different jab for the same match.
+
+`npm run preview:messages` prints every shape with sample data. Run it after any
+format change and read the output before shipping.
+
 ## Regression traps — things that look like cleanup but are not
 
 - **`.github/workflows/keepalive.yml`** looks like pointless commit noise. It is

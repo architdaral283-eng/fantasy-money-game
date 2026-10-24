@@ -9,6 +9,8 @@ import { parseCommand, parseOneLine } from '@/lib/parse/one-line';
 import { submitManualLine } from '@/lib/entry/submit';
 import { buildPinText } from '@/lib/notify/panel';
 import { commissionerHeaders, telegramWebhookAuthed } from '@/lib/auth/require-commissioner';
+import { buildHelp, buildRules, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, block, head, signed, money, pre, cols, esc } from '@/lib/notify/format';
+import { istClock, istDay } from '@/lib/notify/fixture-notice';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app';
 
@@ -292,19 +294,12 @@ export async function POST(req: Request) {
   const cmdline = text.split(' ')[0].replace(/@\w+$/, '');
   const rest = text.slice(cmdline.length).trim();
 
-  const HELP_ALL = `Commands: /standings /me /balance /next /last /trophies /stakes /swing /exposure /streak /rewind /taunt /h2h /nemesis /club /ledger /awards /settle /correct /report /rules /help`;
-  const HELP_COMM = `Commissioner: /pending /health /pin`;
-
-  if (cmdline === '/start') {
-    await reply(`Record office bot. Link by name is already done for all four of you.\n\n${HELP_ALL}\n${me.role === 'COMMISSIONER' ? HELP_COMM : ''}`);
-    return NextResponse.json({ ok: true });
-  }
-  if (cmdline === '/help') {
-    await reply(me.role === 'COMMISSIONER' ? `${HELP_ALL}\n${HELP_COMM}` : HELP_ALL);
+  if (cmdline === '/start' || cmdline === '/help') {
+    await reply(buildHelp(me.role === 'COMMISSIONER'));
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/standings' || cmdline === '/table') {
-    await reply(`<pre>${stripHtml(await pinState(db)).slice(0, 1500)}</pre>`);
+    await reply((await pinState(db)).slice(0, 3000));
     try {
       const pngRes = await fetch(`${APP_URL}/api/og/standings`);
       const buf = Buffer.from(await pngRes.arrayBuffer());
@@ -320,7 +315,7 @@ export async function POST(req: Request) {
     const who = (rest.toLowerCase() || me.id);
     const { data: b } = await db.from('player_balances').select('*');
     const row = ((b ?? []) as { id: string; name: string; net_inr: number }[]).find((r) => r.id === who || r.name.toLowerCase() === who);
-    await reply(row ? `${row.name}: ${row.net_inr >= 0 ? '+' : '−'}₹${Math.abs(Number(row.net_inr)).toLocaleString('en-IN')}` : 'No such player.');
+    await reply(row ? block(head(row.name), signed(Number(row.net_inr))) : 'No such player. There are four of you.');
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/me') {
@@ -333,30 +328,57 @@ export async function POST(req: Request) {
     const net = Number((b as { net_inr?: number } | null)?.net_inr ?? 0);
     const n = (o: string) => ((w ?? []) as { outcome: string }[]).filter((r) => r.outcome === o).length;
     const clubs = ((mine ?? []) as { name: string; league: string }[]).map((c) => `${c.name} (${c.league})`).join(', ');
-    await reply(`${me.name}: ${net >= 0 ? '+' : '−'}₹${Math.abs(net).toLocaleString('en-IN')}, ${n('W')}W ${n('L')}L ${n('D')}D\nClubs: ${clubs}`);
+    await reply(block(head(me.name), `${signed(net)}  ·  ${n('W')}W ${n('L')}L ${n('D')}D`, `Clubs: ${clubs}`));
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/next' || cmdline === '/fixtures') {
-    const { data: fx } = await db.from('fixtures').select('home_club_id,away_club_id,competition_id,kickoff_utc').eq('status', 'SCHEDULED').order('kickoff_utc').limit(6);
-    const { data: clubs } = await db.from('clubs').select('id,name');
-    const cmap = new Map(((clubs ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]));
-    const list = ((fx ?? []) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string | null }[])
-      .map((f) => `${cmap.get(f.home_club_id) ?? f.home_club_id} v ${cmap.get(f.away_club_id) ?? f.away_club_id} (${f.competition_id}, ${f.kickoff_utc ? ist(f.kickoff_utc) : 'TBC'})`).join('\n');
-    await reply(`Next counted fixtures\n\n${list || 'None scheduled.'}`);
+    const want = Math.min(Math.max(parseInt(rest || '8', 10) || 8, 1), 20);
+    const [{ data: fx }, { data: clubs }, { data: bal }, { data: comps }] = await Promise.all([
+      db.from('fixtures').select('home_club_id,away_club_id,competition_id,kickoff_utc')
+        .eq('status', 'SCHEDULED').eq('is_same_owner', false).order('kickoff_utc', { nullsFirst: false }).limit(want),
+      db.from('clubs').select('id,name,owner_id'),
+      db.from('player_balances').select('id,name'),
+      db.from('competitions').select('id,name'),
+    ]);
+    const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
+    const pmap = new Map(((bal ?? []) as { id: string; name: string }[]).map((b) => [b.id, b.name]));
+    const kmap = new Map(((comps ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]));
+    const who = (clubId: string) => pmap.get(cmap.get(clubId)?.owner_id ?? '') ?? cmap.get(clubId)?.owner_id ?? '?';
+    await reply(buildFixtureList(((fx ?? []) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string | null }[]).map((f) => ({
+      home: cmap.get(f.home_club_id)?.name ?? f.home_club_id,
+      away: cmap.get(f.away_club_id)?.name ?? f.away_club_id,
+      compId: f.competition_id,
+      compName: kmap.get(f.competition_id) ?? null,
+      ownerA: who(f.home_club_id),
+      ownerB: who(f.away_club_id),
+      timeIST: f.kickoff_utc ? istClock(f.kickoff_utc) : null,
+      dateIST: f.kickoff_utc ? istDay(f.kickoff_utc) : null,
+    }))));
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/last') {
     const n = Math.min(Math.max(parseInt(rest || '5', 10) || 5, 1), 10);
-    const { data: rows } = await db.from('ledger_entries').select('description,from_player_id,to_player_id,amount_inr').order('id', { ascending: false }).limit(n);
-    const list = ((rows ?? []) as { description: string; from_player_id: string; to_player_id: string; amount_inr: number }[])
-      .map((r) => `${r.description}: ₹${r.amount_inr} ${r.from_player_id} to ${r.to_player_id}`).join('\n');
-    await reply(list || 'Nothing recorded yet.');
+    const [{ data: rows }, { data: bal }] = await Promise.all([
+      db.from('ledger_entries').select('description,from_player_id,to_player_id,amount_inr').order('id', { ascending: false }).limit(n),
+      db.from('player_balances').select('id,name'),
+    ]);
+    const nm = new Map(((bal ?? []) as { id: string; name: string }[]).map((b) => [b.id, b.name]));
+    await reply(buildLedgerList(((rows ?? []) as { description: string; from_player_id: string; to_player_id: string; amount_inr: number }[])
+      .map((r) => ({ from: nm.get(r.from_player_id) ?? r.from_player_id, to: nm.get(r.to_player_id) ?? r.to_player_id, amount: Number(r.amount_inr), description: r.description })),
+      'Last results', `${n} most recent`));
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/trophies') {
-    const { data: tr } = await db.from('trophies').select('competition_id,status');
-    const list = ((tr ?? []) as { competition_id: string; status: string }[]).map((t) => `${t.competition_id}: ${t.status}`).join('\n');
-    await reply(`Trophies\n\n${list}\n\nPool ₹24,000.`);
+    const [{ data: tr }, { data: comps }] = await Promise.all([
+      db.from('trophies').select('competition_id,status'),
+      db.from('competitions').select('id,name,trophy_each_other_pays'),
+    ]);
+    const km = new Map(((comps ?? []) as { id: string; name: string; trophy_each_other_pays: number }[]).map((c) => [c.id, c]));
+    await reply(buildTrophies(((tr ?? []) as { competition_id: string; status: string }[]).map((t) => ({
+      name: km.get(t.competition_id)?.name ?? t.competition_id,
+      status: t.status,
+      eachOtherPays: Number(km.get(t.competition_id)?.trophy_each_other_pays ?? 0),
+    }))));
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/report') {
@@ -393,7 +415,12 @@ export async function POST(req: Request) {
       db.from('api_call_log').select('called_at').order('called_at', { ascending: false }).limit(1),
       db.from('pending_approvals').select('id', { count: 'exact', head: true }).eq('status', 'PENDING'),
     ]);
-    await reply(`Provider calls 24h: ${fd ?? 0}. Last poll: ${(last as { called_at?: string }[] | null)?.[0]?.called_at ?? 'never'}. Pending: ${pendN ?? 0}.`);
+    const lastAt = (last as { called_at?: string }[] | null)?.[0]?.called_at;
+    await reply(block(head('Health'), pre(esc([
+      `Provider calls 24h   ${fd ?? 0}`,
+      `Last poll            ${lastAt ? `${istClock(lastAt)} IST, ${istDay(lastAt)}` : 'never'}`,
+      `Pending approvals    ${pendN ?? 0}`,
+    ].join('\n')))));
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/pin') {
@@ -403,7 +430,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/rules') {
-    await reply('Win by 1-3 pays ₹500. Win by 4+ pays ₹1000. Draws pay ₹0. Knockouts: whoever advances wins. Two legs count as one aggregate.');
+    await reply(buildRules());
     return NextResponse.json({ ok: true });
   }
 
@@ -427,10 +454,6 @@ export async function POST(req: Request) {
   await reply(`Proposal ready. ${r.summary} Waiting on Archit.`);
   await notifyArchitApproval(db, r.approvalId, `Report from ${me.name}: ${text}\n${r.summary}`);
   return NextResponse.json({ ok: true });
-}
-
-function stripHtml(s: string): string {
-  return s.replace(/<[^>]*>/g, '');
 }
 
 /** Gather everything the roast engine needs for one recorded fixture. */
@@ -568,11 +591,11 @@ async function answerTaunt(
     db.from('player_balances').select('id,name,net_inr'),
     db.from('clubs').select('name,league').eq('owner_id', pid),
   ]);
-  const table = ((b2 ?? []) as { id: string; name: string; net_inr: number }[])
+  const table = cols(((b2 ?? []) as { id: string; name: string; net_inr: number }[])
     .sort((x, y) => Number(y.net_inr) - Number(x.net_inr))
-    .map((r, i) => `${i + 1}. ${r.name} ${Number(r.net_inr) >= 0 ? '+' : '−'}₹${Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}`).join('\n');
+    .map((r, i) => [`${i + 1}  ${r.name}`, signed(Number(r.net_inr))] as [string, string]));
   const clubsLine = ((mine2 ?? []) as { name: string; league: string }[]).map((c) => `${c.name} (${c.league})`).join(', ');
-  await reply(`${text}\n\nStandings:\n${table}\n\nDraft: ${clubsLine}`);
+  await reply(block(text, pre(esc(table)), `Clubs: ${clubsLine}`));
 }
 
 async function statsReply(
@@ -609,7 +632,9 @@ async function statsReply(
 
   if (cmd === '/stakes') {
     const s = stakesFor(week.length);
-    await reply(week.length ? `${week.length} counted fixtures in the next 7 days.\n₹${s.base.toLocaleString('en-IN')} in play. ₹${s.ifBig.toLocaleString('en-IN')} if all go big.` : 'Nothing counted in the next 7 days.');
+    await reply(week.length
+      ? block(head('Stakes', 'next 7 days'), `${week.length} counted fixture${week.length > 1 ? 's' : ''}.`, `${money(s.base)} in play. ${money(s.ifBig)} if they all go big.`)
+      : block(head('Stakes', 'next 7 days'), 'Nothing counted. Nobody loses money this week, which is its own kind of boring.'));
     return;
   }
   if (cmd === '/exposure') {
@@ -620,22 +645,31 @@ async function statsReply(
     const win = liveT.filter((t) => t.code !== 'UCL' || hasUcl).map((t) => t.winnerPrize);
     const lose = liveT.map((t) => t.eachOtherPays);
     const { best, worst } = ceilingFloor(bals.get(pid)?.net ?? 0, remaining.length, win, lose);
-    await reply(`${nameOf(pid)}: ceiling ${inr(best)}, floor ${inr(worst)}, across ${remaining.length} fixtures and ${liveT.length} live trophies. Arithmetic, not prediction.`);
+    await reply(block(
+      head('Exposure', nameOf(pid)),
+      pre(esc(cols([['Ceiling', inr(best)], ['Floor', inr(worst)]]))),
+      `Across ${remaining.length} fixtures and ${liveT.length} live trophies. Arithmetic, not prediction.`,
+    ));
     return;
   }
   if (cmd === '/swing') {
     const s = biggestSwing(liveT);
-    await reply(`Biggest swing left: ${s.label}, ₹${s.swing.toLocaleString('en-IN')}.`);
+    await reply(block(head('Biggest swing left'), s.label, `${money(s.swing)} rides on it.`));
     return;
   }
   if (cmd === '/streak') {
-    await reply(['archit', 'vedant', 'harshal', 'anmol'].map((p) => `${nameOf(p)}: ${formString(evts, p)}`).join('\n'));
+    await reply(block(
+      head('Form', 'last five'),
+      pre(esc(cols(['archit', 'vedant', 'harshal', 'anmol'].map((p) => [nameOf(p), formString(evts, p)] as [string, string])))),
+    ));
     return;
   }
   if (cmd === '/rewind') {
     const since = Date.now() - 7 * 864e5;
     const rows = ((ledger ?? []) as { description: string; from_player_id: string; to_player_id: string; amount_inr: number; created_at: string }[]).filter((r) => Date.parse(r.created_at) >= since);
-    await reply(rows.map((r) => `${r.description}: ₹${r.amount_inr} ${r.from_player_id} to ${r.to_player_id}`).join('\n') || 'Quiet week. Nothing written.');
+    await reply(buildLedgerList(
+      rows.map((r) => ({ from: nameOf(r.from_player_id), to: nameOf(r.to_player_id), amount: Number(r.amount_inr), description: r.description })),
+      'Rewind', 'last 7 days'));
     return;
   }
   if (cmd === '/taunt') {
@@ -652,27 +686,30 @@ async function statsReply(
     const owners = new Map(((clubs ?? []) as { id: string; owner_id: string }[]).map((c) => [c.id, c.owner_id]));
     const wldAll = (wld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[];
     const ledAll = (ledger ?? []) as { fixture_id?: string | null; from_player_id: string; to_player_id: string; amount_inr: number }[];
-    let aw = 0, bw = 0, dr = 0, netA = 0, games = 0;
-    for (const f of (fx ?? []) as { id: string; home_club_id: string; away_club_id: string; status: string }[]) {
-      if (f.status !== 'RECORDED') continue;
-      const pair = new Set([owners.get(f.home_club_id), owners.get(f.away_club_id)]);
-      if (!(pair.has(a) && pair.has(b))) continue;
-      games++;
-      const rows = wldAll.filter((w) => w.fixture_id === f.id);
-      if (rows.length && rows.every((w) => w.outcome === 'D')) { dr++; }
-      else {
-        for (const w of rows) {
-          if (w.player_id === a) { if (w.outcome === 'W') aw++; else bw++; }
-          else if (w.player_id === b) { if (w.outcome === 'W') bw++; else aw++; }
-        }
-      }
-      for (const e of ledAll.filter((x) => x.fixture_id === f.id)) {
-        netA += (e.to_player_id === a ? e.amount_inr : 0) - (e.from_player_id === a ? e.amount_inr : 0);
-      }
+    const { h2hTally } = await import('@/lib/stats/h2h');
+    const pairFx = ((fx ?? []) as { id: string; home_club_id: string; away_club_id: string; status: string }[])
+      .filter((f) => {
+        const pair = new Set([owners.get(f.home_club_id), owners.get(f.away_club_id)]);
+        return f.status === 'RECORDED' && pair.has(a) && pair.has(b);
+      });
+    const tally = h2hTally(a, b, pairFx, (id) => owners.get(id), wldAll);
+    const { games, aWins: aw, bWins: bw, draws: dr } = tally;
+    let netA = 0;
+    const pairIds = new Set(pairFx.map((f) => f.id));
+    for (const e of ledAll) {
+      if (!e.fixture_id || !pairIds.has(e.fixture_id)) continue;
+      netA += (e.to_player_id === a ? e.amount_inr : 0) - (e.from_player_id === a ? e.amount_inr : 0);
     }
     await reply(games === 0
-      ? `${nameOf(a)} v ${nameOf(b)}: nothing played yet.`
-      : `${nameOf(a)} v ${nameOf(b)}: ${games} played, ${aw}-${bw}-${dr} (W-L-D for ${nameOf(a)}), net ${inr(netA)} to ${nameOf(a)}.`);
+      ? block(head('Head to head', `${nameOf(a)} v ${nameOf(b)}`), 'Never met. Nothing to argue about yet.')
+      : block(
+        head('Head to head', `${nameOf(a)} v ${nameOf(b)}`),
+        pre(esc(cols([
+          ['Played', String(games)],
+          [`${nameOf(a)} record`, `${aw}W ${bw}L ${dr}D`],
+          ['Money', `${inr(netA)} to ${nameOf(a)}`],
+        ]))),
+      ));
     return;
   }
   if (cmd === '/nemesis') {
@@ -683,9 +720,13 @@ async function statsReply(
       if (e.from_player_id !== pid) continue;
       taken.set(e.to_player_id, (taken.get(e.to_player_id) ?? 0) + e.amount_inr);
     }
-    if (!taken.size) { await reply(`${nameOf(pid)} has paid nobody. Clean.`); return; }
+    if (!taken.size) { await reply(block(head('Nemesis', nameOf(pid)), 'Has paid nobody all season. Enjoy it while it lasts.')); return; }
     const [nem, amt] = [...taken.entries()].sort((x, y) => y[1] - x[1])[0];
-    await reply(`${nameOf(pid)} pays most to ${nameOf(nem)}: ₹${amt.toLocaleString('en-IN')} all season.`);
+    await reply(block(
+      head('Nemesis', nameOf(pid)),
+      `${nameOf(nem)} — ${money(amt)} all season.`,
+      `That is ${nameOf(pid)} funding ${nameOf(nem)} one result at a time.`,
+    ));
     return;
   }
   if (cmd === '/club') {
@@ -711,13 +752,18 @@ async function statsReply(
       }
     }
     const left = fxAll.filter((f) => f.status === 'SCHEDULED').length;
-    await reply(`${club.name} (${nameOf(club.owner_id)}): ${w}W ${l}L ${d}D, ${inr(earned)} generated, ${left} to play.`);
+    await reply(block(
+      head(club.name, nameOf(club.owner_id)),
+      pre(esc(cols([['Record', `${w}W ${l}L ${d}D`], ['Generated', inr(earned)], ['Left to play', String(left)]]))),
+    ));
     return;
   }
   if (cmd === '/ledger') {
     const n = Math.min(Math.max(parseInt(rest || '5', 10) || 5, 1), 10);
     const rows = ((ledger ?? []) as { description: string; from_player_id: string; to_player_id: string; amount_inr: number }[]).slice(-n).reverse();
-    await reply(rows.map((r) => `${r.description}: ₹${r.amount_inr} ${r.from_player_id} to ${r.to_player_id}`).join('\n') || 'Ledger empty.');
+    await reply(buildLedgerList(
+      rows.map((r) => ({ from: nameOf(r.from_player_id), to: nameOf(r.to_player_id), amount: Number(r.amount_inr), description: r.description })),
+      'Ledger', `last ${rows.length}`));
     return;
   }
   if (cmd === '/awards') {
@@ -727,7 +773,15 @@ async function statsReply(
       ((ledger ?? []) as { to_player_id: string; from_player_id: string; amount_inr: number; event_type: string }[]).map((r) => ({ ...r, event_type: r.event_type as 'MATCH' | 'TROPHY' | 'CORRECTION' })),
       evts.map((e) => ({ player_id: e.player, outcome: e.outcome, occurred_at: e.at })),
     );
-    await reply(`Most wins: ${a.mostWins ? nameOf(a.mostWins) : '—'}\nMost losses: ${a.mostLosses ? nameOf(a.mostLosses) : '—'}\nMost successful: ${a.mostSuccessfulPlayer ? nameOf(a.mostSuccessfulPlayer) : '—'}\nFull list on the site.`);
+    await reply(block(
+      head('Awards', 'so far'),
+      pre(esc(cols([
+        ['Most wins', a.mostWins ? nameOf(a.mostWins) : '—'],
+        ['Most losses', a.mostLosses ? nameOf(a.mostLosses) : '—'],
+        ['Most successful', a.mostSuccessfulPlayer ? nameOf(a.mostSuccessfulPlayer) : '—'],
+      ]))),
+      'Full list on the site.',
+    ));
     return;
   }
   if (cmd === '/settle') {
@@ -735,7 +789,7 @@ async function statsReply(
     const net: Record<string, number> = { archit: 0, vedant: 0, harshal: 0, anmol: 0 };
     for (const p of ['archit', 'vedant', 'harshal', 'anmol']) net[p] = bals.get(p)?.net ?? 0;
     const pays = settle(net);
-    await reply(pays.length ? pays.map((x) => `${nameOf(x.from)} pays ${nameOf(x.to)} ₹${x.amount.toLocaleString('en-IN')}`).join('\n') : 'Everyone is square. No payments needed.');
+    await reply(buildSettle(pays.map((x) => ({ from: nameOf(x.from), to: nameOf(x.to), amount: x.amount }))));
     return;
   }
   if (cmd === '/quiet') {

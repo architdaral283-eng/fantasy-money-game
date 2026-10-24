@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "vitest run",
     "seed:check": "npx tsx scripts/boot-check.ts",
-    "backup": "bash scripts/backup.sh"
+    "backup": "bash scripts/backup.sh",
+    "preview:messages": "vite-node -c vitest.config.ts scripts/preview-messages.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.6",

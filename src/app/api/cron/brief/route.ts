@@ -34,15 +34,23 @@ export async function POST(req: Request) {
     .gte('kickoff_utc', new Date(startUtc).toISOString())
     .lt('kickoff_utc', new Date(endUtc).toISOString())
     .order('kickoff_utc');
-  const [{ data: clubs }] = [await db.from('clubs').select('id,name,owner_id')];
+  const [{ data: clubs }, { data: bal }, { data: comps }] = await Promise.all([
+    db.from('clubs').select('id,name,owner_id'),
+    db.from('player_balances').select('id,name'),
+    db.from('competitions').select('id,name'),
+  ]);
   const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
+  const pmap = new Map(((bal ?? []) as { id: string; name: string }[]).map((b) => [b.id, b.name]));
+  const kmap = new Map(((comps ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]));
+  const who = (clubId: string) => pmap.get(cmap.get(clubId)?.owner_id ?? '') ?? cmap.get(clubId)?.owner_id ?? '?';
   const fmt = (iso: string) => new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso));
   const list = ((fx ?? []) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string }[]).map((f) => ({
     home: cmap.get(f.home_club_id)?.name ?? f.home_club_id,
     away: cmap.get(f.away_club_id)?.name ?? f.away_club_id,
-    comp: f.competition_id,
-    ownerA: cmap.get(f.home_club_id)?.owner_id ?? '?',
-    ownerB: cmap.get(f.away_club_id)?.owner_id ?? '?',
+    compId: f.competition_id,
+    comp: kmap.get(f.competition_id) ?? null,
+    ownerA: who(f.home_club_id),
+    ownerB: who(f.away_club_id),
     whenIST: fmt(f.kickoff_utc),
   }));
   const text = buildBriefText(list);

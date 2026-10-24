@@ -7,6 +7,7 @@ import { ownerOf } from '@/lib/domain/constants';
 import { fanOutText } from '@/lib/notify/send';
 import { dueReminders } from '@/lib/notify/send';
 import { drainQueue, architAwake, sendGroup } from '@/lib/notify/quiet';
+import { fixtureNotice, isTodayIST } from '@/lib/notify/fixture-notice';
 
 function authed(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -66,14 +67,6 @@ export async function POST(req: Request) {
     if (!error) architChatIdCache = id;
     return id;
   };
-  let clubMapCache: Map<string, { id: string; name: string; owner_id: string }> | undefined;
-  const clubMap = async () => {
-    if (clubMapCache) return clubMapCache;
-    const { data: clubs, error } = await db.from('clubs').select('id,name,owner_id');
-    const m = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
-    if (!error) clubMapCache = m;
-    return m;
-  };
 
   // schedule sync runs when fixtures lack dates or the last sync is >24h old (quota care)
   const { data: lastSync } = await db.from('config').select('value').eq('key', 'last_schedule_sync').single();
@@ -82,7 +75,10 @@ export async function POST(req: Request) {
     .is('kickoff_utc', null)
     .in('competition_id', ['epl', 'laliga', 'bundesliga', 'seriea', 'ucl']);
   const lastMs = Date.parse((lastSync?.value as { at?: string })?.at ?? '2000-01-01');
-  const doScheduleSync = (undated ?? 0) > 0 || nowMs - lastMs > 24 * 3600 * 1000;
+  // ?sync=1 forces a full schedule + cup discovery pass on demand. The daily
+  // gate exists to protect the 100-call API-Football quota, not to be absolute.
+  const forceSync = new URL(req.url).searchParams.get('sync') === '1';
+  const doScheduleSync = forceSync || (undated ?? 0) > 0 || nowMs - lastMs > 24 * 3600 * 1000;
 
   // live window: only competitions with a fixture near kickoff get polled.
   //
@@ -176,7 +172,10 @@ export async function POST(req: Request) {
             } else if (!insErr) {
               diag.scheduled++; summary.synced++;
               const { sendGroup } = await import('@/lib/notify/quiet');
-              await sendGroup(db, `New fixture drawn: ${s.homeClubId} v ${s.awayClubId} (${COMP_ID[code]}, ${sRound}). ${ownerOf(s.homeClubId)} v ${ownerOf(s.awayClubId)}.${isKnockoutRound(sRound) ? ' Knockout tie — result goes to approval, not auto-write.' : ''}`);
+              await sendGroup(db, await fixtureNotice(db, {
+                home_club_id: s.homeClubId, away_club_id: s.awayClubId,
+                competition_id: COMP_ID[code], kickoff_utc: s.kickoffUtc ? new Date(s.kickoffUtc).toISOString() : null, round: sRound,
+              }, 'drawn') + (isKnockoutRound(sRound) ? '\n\nKnockout tie. The result goes to approval, not auto-write.' : ''));
             }
             continue;
           }
@@ -452,7 +451,10 @@ export async function POST(req: Request) {
               summary.errors.push(`cup insert ${code} ${c.homeClubId} v ${c.awayClubId}: ${cupErr.message}`);
             } else if (!cupErr) {
               cupsFound++;
-              await sendGroup(db, `Cup tie drawn: ${c.homeClubId} v ${c.awayClubId} (${CUP_ID[code]}, ${round}). ${ownerOf(c.homeClubId)} v ${ownerOf(c.awayClubId)}. Report the result with /report when it is played.`);
+              await sendGroup(db, await fixtureNotice(db, {
+                home_club_id: c.homeClubId, away_club_id: c.awayClubId,
+                competition_id: CUP_ID[code], kickoff_utc: c.kickoffUtc ? new Date(c.kickoffUtc).toISOString() : null, round,
+              }, 'drawn'));
             }
           }
         }
@@ -463,17 +465,11 @@ export async function POST(req: Request) {
   }
 
   // 24h reminders — group only, flag FIRST so a hiccup can never re-send
-  const { data: sched } = await db.from('fixtures').select('id,status,kickoff_utc,reminder_sent_at,home_club_id,away_club_id,competition_id').eq('status', 'SCHEDULED');
+  const { data: sched } = await db.from('fixtures').select('id,status,kickoff_utc,reminder_sent_at,home_club_id,away_club_id,competition_id,round').eq('status', 'SCHEDULED');
   for (const id of dueReminders((sched ?? []) as { id: string; status: string; kickoff_utc: string | null; reminder_sent_at: string | null }[], nowMs)) {
-    const f = (sched ?? []).find((x: { id: string }) => x.id === id) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string };
-    const when = new Date(f.kickoff_utc).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const f = (sched ?? []).find((x: { id: string }) => x.id === id) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string; round?: string | null };
     await db.from('fixtures').update({ reminder_sent_at: new Date().toISOString() }).eq('id', id);
-    const cmap2 = await clubMap();
-    const h2 = cmap2.get(f.home_club_id);
-    const a2 = cmap2.get(f.away_club_id);
-    const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
-    const dayLabel = dayFmt.format(new Date()) === dayFmt.format(new Date(f.kickoff_utc)) ? 'Today' : 'Tomorrow';
-    await sendGroup(db, `${dayLabel}: ${h2?.name ?? f.home_club_id} v ${a2?.name ?? f.away_club_id} (${f.competition_id}), ${when} IST. ${h2?.owner_id ?? '?'} v ${a2?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`);
+    await sendGroup(db, await fixtureNotice(db, { ...f, id }, isTodayIST(f.kickoff_utc) ? 'today' : 'tomorrow'));
     summary.reminders++;
   }
 
@@ -481,23 +477,20 @@ export async function POST(req: Request) {
   const drained = await drainQueue(db).catch(() => ({ released: 0 }));
 
   // 30-minute pre-match group warning — time-sensitive by definition, always immediate
-  const { data: soon } = await db.from('fixtures').select('id,competition_id,home_club_id,away_club_id,kickoff_utc')
+  const { data: soon } = await db.from('fixtures').select('id,competition_id,home_club_id,away_club_id,kickoff_utc,round')
     .eq('status', 'SCHEDULED').is('pre_match_sent_at', null)
     .gt('kickoff_utc', new Date(nowMs).toISOString())
     .lte('kickoff_utc', new Date(nowMs + 35 * 60 * 1000).toISOString());
   let prematch = 0;
   if ((soon ?? []).length) {
     const { sendGroup } = await import('@/lib/notify/quiet');
-    const cmap = await clubMap();
-    for (const f of (soon ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string; kickoff_utc: string }[]) {
-      const h = cmap.get(f.home_club_id);
-      const a = cmap.get(f.away_club_id);
+    for (const f of (soon ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string; kickoff_utc: string; round?: string | null }[]) {
       const mins = Math.max(1, Math.ceil((Date.parse(f.kickoff_utc) - Date.now()) / 60000));
       await db.from('fixtures').update({ pre_match_sent_at: new Date().toISOString() }).eq('id', f.id);
-      await sendGroup(db, `${h?.name ?? f.home_club_id} v ${a?.name ?? f.away_club_id} kicks off in ${mins} minutes (${f.competition_id}). ${h?.owner_id ?? '?'} v ${a?.owner_id ?? '?'}. ₹500, ₹1000 if 4+.`, { urgent: true });
+      await sendGroup(db, await fixtureNotice(db, f, 'prematch', mins), { urgent: true });
       prematch++;
     }
   }
 
-  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, cupsFound });
+  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, cupsFound, scheduleSync: doScheduleSync, forced: forceSync });
 }

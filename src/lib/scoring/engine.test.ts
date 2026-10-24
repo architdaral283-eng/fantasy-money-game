@@ -291,7 +291,7 @@ describe('Invariants (§1)', () => {
     const bump = (p: string, d: number) => net.set(p, (net.get(p) ?? 0) + d);
     for (let i = 0; i < 500; i++) {
       const h = owned[Math.floor(Math.random() * owned.length)];
-      let a = owned[Math.floor(Math.random() * owned.length)];
+      const a = owned[Math.floor(Math.random() * owned.length)];
       if (a === h) continue;
       const hg = Math.floor(Math.random() * 6);
       const ag = Math.floor(Math.random() * 5);

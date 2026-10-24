@@ -1,6 +1,9 @@
 // Pinned panel + matchday brief text builders — pure, tested.
 // HTML parse mode with <pre> so columns align in every client. No Markdown:
 // club names with underscores would break it.
+// House style and the shared primitives live in format.ts.
+
+import { block, head, pre, esc, money, padR, compShort, STAKE_LINE } from '@/lib/notify/format';
 
 export interface StandingRow { name: string; net: number; w: number; l: number; d: number }
 export interface NextFixture { home: string; away: string; ownerA: string; ownerB: string; whenIST: string }
@@ -23,22 +26,25 @@ export function buildPinText(rows: StandingRow[], played: number, totalPaying: n
     sum === 0 ? `◎ balances sum to ₹0` : `Balances do not sum to ₹0. Ledger locked.`,
   ];
   if (next) {
-    lines.push(``, `Next: ${next.home} v ${next.away}, ${next.whenIST} IST`, `${next.ownerA} v ${next.ownerB}. ₹500, ₹1000 if 4+.`);
+    lines.push(``, `Next: ${next.home} v ${next.away}, ${next.whenIST} IST`, `${next.ownerA} v ${next.ownerB}. ${STAKE_LINE}`);
   }
   lines.push(``, `updated ${updatedIST} IST`);
   return lines.join('\n');
 }
 
-export interface BriefFixture { home: string; away: string; comp: string; ownerA: string; ownerB: string; whenIST: string }
+export interface BriefFixture { home: string; away: string; compId: string; comp?: string | null; ownerA: string; ownerB: string; whenIST: string }
 
-/** 09:00 IST matchday brief. */
+/** 09:00 IST matchday brief. Same shape as /next, one day's worth. */
 export function buildBriefText(fixtures: BriefFixture[]): string {
   if (fixtures.length === 0) return '';
-  const lines = [`TODAY, ${fixtures.length} counted fixture${fixtures.length > 1 ? 's' : ''}`, ``];
-  for (const f of fixtures) {
-    lines.push(`${f.whenIST}  ${f.home} v ${f.away}   ${f.comp}`, `       ${f.ownerA} v ${f.ownerB}   ₹500. ₹1000 if 4+`, ``);
-  }
+  const body = fixtures.map((f) => [
+    ` ${padR(f.whenIST, 5)}  ${f.home} v ${f.away}`,
+    `        ${f.ownerA} v ${f.ownerB} · ${compShort(f.compId, f.comp)}`,
+  ].join('\n')).join('\n\n');
   const base = fixtures.length * 500;
-  lines.push(`₹${base.toLocaleString('en-IN')} in play. ₹${(base * 2).toLocaleString('en-IN')} if all go big.`);
-  return lines.join('\n');
+  return block(
+    head('Today', `${fixtures.length} counted fixture${fixtures.length > 1 ? 's' : ''}`),
+    pre(esc(body)),
+    `${money(base)} in play. ${money(base * 2)} if they all go big.`,
+  );
 }
