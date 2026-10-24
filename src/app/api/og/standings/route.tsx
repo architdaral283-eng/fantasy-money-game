@@ -4,7 +4,14 @@ import { supabaseService } from '@/lib/db/supabase';
 export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
 
-/** Standings table as a PNG photo for Telegram/WhatsApp. */
+/**
+ * Standings table as a PNG photo for Telegram/WhatsApp.
+ *
+ * SATORI RULE: every <div> here must have EXACTLY ONE child, or carry an
+ * explicit `display: flex`. JSX turns `{a}W {b}L` into several children, which
+ * made next/og log: Expected <div> to have explicit "display: flex".
+ * Keep interpolated text as a single template string.
+ */
 export async function GET() {
   const db = supabaseService();
   const [{ data: bal }, { data: wld }] = await Promise.all([
@@ -31,13 +38,13 @@ export async function GET() {
             <div style={{ width: 60 }}>{i + 1}</div>
             <div style={{ width: 300 }}>{r.name}</div>
             <div style={{ width: 220, color: Number(r.net_inr) >= 0 ? '#10281B' : '#C8102E', fontWeight: 600 }}>
-              {Number(r.net_inr) >= 0 ? '+' : '−'}₹{Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}
+              {`${Number(r.net_inr) >= 0 ? '+' : '−'}₹${Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}`}
             </div>
-            <div style={{ color: '#6B7A6E' }}>{r.w}W {r.l}L {r.d}D</div>
+            <div style={{ color: '#6B7A6E' }}>{`${r.w}W ${r.l}L ${r.d}D`}</div>
           </div>
         ))}
         <div style={{ marginTop: 28, fontSize: 24, background: '#10281B', color: '#F1F4EF', padding: '12px 20px', alignSelf: 'flex-start' }}>
-          Zero-sum check: ₹{total} {total === 0 ? 'passed' : 'FAILED. Ledger locked.'}
+          {`Zero-sum check: ₹${total} ${total === 0 ? 'passed' : 'FAILED. Ledger locked.'}`}
         </div>
       </div>
     ),
