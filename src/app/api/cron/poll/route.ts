@@ -264,18 +264,30 @@ export async function POST(req: Request) {
           summary.autoWritten++;
           const scoreline = `${fixture.home_club_id} ${swapped ? r.scoreAt90.away : r.scoreAt90.home}-${swapped ? r.scoreAt90.home : r.scoreAt90.away} ${fixture.away_club_id}`;
           await refreshPin(db);
-          try {
-            const pngRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app'}/api/og/standings`);
-            const png = await pngRes.arrayBuffer();
-            const { fanOutPhoto } = await import('@/lib/notify/send');
-            await fanOutPhoto(db, 'result_recorded', `Recorded automatically. ${scoreline}. Standings attached.`, async () => png);
-            const { sendGroupPhoto } = await import('@/lib/notify/quiet');
-            await sendGroupPhoto(db, `Standings. ${scoreline}.`, async () => png);
-          } catch { /* photo best-effort */ }
+
+          // ORDER MATTERS. The result + taunt goes FIRST, then the standings
+          // photo immediately after it. It used to be the other way round, so
+          // the group saw a bare table and then the text explaining it. Nobody
+          // reads the pinned message, which is why the photo is posted inline.
           const roast = await fireRoast(db, fixture.id, false).catch(() => null);
           if (roast) {
             const { sendGroup } = await import('@/lib/notify/quiet');
             await sendGroup(db, roast);
+          }
+          try {
+            const pngRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app'}/api/og/standings`);
+            if (!pngRes.ok) throw new Error(`og/standings HTTP ${pngRes.status}`);
+            const png = await pngRes.arrayBuffer();
+            if (png.byteLength < 1000) throw new Error(`og/standings returned ${png.byteLength} bytes`);
+            const { fanOutPhoto } = await import('@/lib/notify/send');
+            await fanOutPhoto(db, 'result_recorded', 'Standings after that result.', async () => png);
+            const { sendGroupPhoto } = await import('@/lib/notify/quiet');
+            // caption left empty: the result message above already has the score,
+            // and the old caption printed raw club ids ("aston-villa 2-1 man-city")
+            await sendGroupPhoto(db, '', async () => png);
+          } catch (e) {
+            // was a silent `catch {}`, which hid a broken standings image for weeks
+            summary.errors.push(`standings photo failed for ${fixture.id}: ${(e as Error).message}`);
           }
           const { TelegramAdapter: TA } = await import('@/lib/notify/channels');
           const tat = process.env.TELEGRAM_BOT_TOKEN ? new TA(process.env.TELEGRAM_BOT_TOKEN) : null;

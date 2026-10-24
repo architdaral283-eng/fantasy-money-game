@@ -35,13 +35,47 @@ die() { printf 'backup: ERROR: %s\n' "$*" >&2; exit 1; }
 # ── 1. pg_dump present and usable ────────────────────────────────────────────
 command -v pg_dump >/dev/null 2>&1 || die "pg_dump not found. On macOS: 'brew install libpq && brew link --force libpq' (client tools only) or 'brew install postgresql@17'. pg_dump must be at least as new as the Supabase Postgres version (check Settings → Infrastructure)."
 
-# ── 2. DATABASE_URL from the environment or .env (never `source` .env) ───────
+# ── 2. Connection ────────────────────────────────────────────────────────────
+#
+# Three ways, in order. The default stores NO password anywhere.
+#
+#   a) DATABASE_URL in the environment or .env  — if you want it saved
+#   b) ~/.pgpass                                 — the standard Postgres way
+#   c) prompt                                    — nothing stored, asked each run
+#
+# Host, port, database and user are NOT secrets: the project ref already
+# appears in NEXT_PUBLIC_SUPABASE_URL, which ships to every browser. Only the
+# password is sensitive, so only the password is withheld.
+PGHOST_DEFAULT="aws-0-ap-northeast-2.pooler.supabase.com"
+PGPORT_DEFAULT="5432"
+PGDB_DEFAULT="postgres"
+PGUSER_DEFAULT="postgres.tquumbqjsaznstaklxcn"
+
 if [ -z "${DATABASE_URL:-}" ]; then
   ENV_FILE="$ROOT/.env"
-  [ -f "$ENV_FILE" ] || die "no DATABASE_URL in the environment and no $ENV_FILE. Copy .env.example to .env and set DATABASE_URL to the Supabase Session-pooler URI."
-  DATABASE_URL="$(grep -E '^[[:space:]]*DATABASE_URL=' "$ENV_FILE" | head -n 1 | sed -E 's/^[[:space:]]*DATABASE_URL=//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/; s/[[:space:]]+$//')"
+  if [ -f "$ENV_FILE" ]; then
+    DATABASE_URL="$(grep -E '^[[:space:]]*DATABASE_URL=' "$ENV_FILE" | head -n 1 | sed -E 's/^[[:space:]]*DATABASE_URL=//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/; s/[[:space:]]+$//')"
+  fi
 fi
-[ -n "${DATABASE_URL:-}" ] || die "DATABASE_URL is empty. Set it in .env (Supabase → Connect → Session pooler URI, port 5432)."
+
+if [ -z "${DATABASE_URL:-}" ]; then
+  H="${PGHOST:-$PGHOST_DEFAULT}"; P="${PGPORT:-$PGPORT_DEFAULT}"
+  D="${PGDATABASE:-$PGDB_DEFAULT}"; U="${PGUSER:-$PGUSER_DEFAULT}"
+  if [ -f "$HOME/.pgpass" ] && grep -qs ":$U:" "$HOME/.pgpass"; then
+    printf 'backup: using ~/.pgpass for %s@%s\n' "$U" "$H" >&2
+  else
+    printf 'backup: no DATABASE_URL and no ~/.pgpass entry.\n' >&2
+    printf 'backup: database password for %s (input hidden, never written to disk): ' "$U" >&2
+    IFS= read -r -s PGPASSWORD < /dev/tty || die "could not read the password (run this from a terminal)."
+    printf '\n' >&2
+    [ -n "$PGPASSWORD" ] || die "empty password."
+    export PGPASSWORD
+  fi
+  # URI without credentials; libpq takes the password from PGPASSWORD or ~/.pgpass
+  DATABASE_URL="postgresql://${U}@${H}:${P}/${D}"
+fi
+
+[ -n "${DATABASE_URL:-}" ] || die "no connection details."
 case "$DATABASE_URL" in
   postgres://*|postgresql://*) ;;
   *) die "DATABASE_URL does not look like a postgres:// URI." ;;

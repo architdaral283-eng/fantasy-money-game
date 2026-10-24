@@ -35,8 +35,16 @@ export function buildContext(inp: CtxInput): RoastContext {
     loserClub: loser.name, winnerClub: winner.name,
     loserClubId: loser.id, winnerClubId: winner.id,
     score, margin, amount: inp.amount, competition: inp.competition,
+    // home-first scoreline for the header; `score` stays winner-first for slots
+    homeClub: inp.homeClub.name, awayClub: inp.awayClub.name,
+    homeScore: `${inp.homeGoals}–${inp.awayGoals}`,
     loserPick: loser.pick, winnerPick: winner.pick,
-    h2h: inp.h2h.leader ? `${inp.h2h.aWins}–${inp.h2h.bWins} to ${inp.h2h.leader}` : `${inp.h2h.aWins}–${inp.h2h.bWins} level`,
+    // aWins/bWins come from an arbitrary Set iteration order while `leader` is
+    // computed separately, so printing them raw could read "2-1 to Anmol" when
+    // Anmol had won one. Always render leader-first, high score first.
+    h2h: inp.h2h.leader
+      ? `${inp.h2h.leader} leads ${Math.max(inp.h2h.aWins, inp.h2h.bWins)}–${Math.min(inp.h2h.aWins, inp.h2h.bWins)}`
+      : `level at ${inp.h2h.aWins}–${inp.h2h.bWins}`,
     loserNet: inp.nets[loser.owner] ?? 0, winnerNet: inp.nets[winner.owner] ?? 0,
     owed: inp.owed,
     streakLosses: inp.streakLosses,

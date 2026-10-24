@@ -4,8 +4,9 @@ import { pickTemplate, renderBody, statPrefix, type RoastContext, type RoastTemp
 const ctx: RoastContext = {
   loser: 'Vedant', winner: 'Harshal', loserClub: 'Real Madrid', winnerClub: 'Real Betis',
   loserClubId: 'real-madrid', winnerClubId: 'real-betis',
-  score: '0–1', margin: 1, amount: 500, competition: 'La Liga',
-  loserPick: 1, winnerPick: 4, h2h: '5–1 to Harshal',
+  score: '1–0', margin: 1, amount: 500, competition: 'La Liga',
+  homeClub: 'Real Madrid', awayClub: 'Real Betis', homeScore: '0–1',
+  loserPick: 1, winnerPick: 4, h2h: 'Harshal leads 5–1',
   loserNet: -2000, winnerNet: 500, owed: 3000, streakLosses: 4,
   marquee: 'Kylian Mbappé', manager: 'Xabi Alonso', rank: 3,
   isUpset: true, isThrashing: false, derbyId: null,
@@ -45,13 +46,30 @@ describe('roast selection', () => {
 
   it('renders slots from computed truth', () => {
     expect(renderBody('{loser} spent the {loser_pick} pick on {loser_club} and paid {amount}. {h2h}.', ctx))
-      .toBe('Vedant spent the first pick on Real Madrid and paid ₹500. 5–1 to Harshal.');
+      .toBe('Vedant spent the first pick on Real Madrid and paid ₹500. Harshal leads 5–1.');
   });
 
-  it('stat prefix leads with unique numbers', () => {
+  it('renders ${slot} as well as {slot}', () => {
+    // 0012 authored every slot as ${slot}; the $B$ dollar-quote opener only
+    // swallowed the $ when a slot began the string, so mid-string slots left a
+    // stray $ in the group chat ("$Harshal paid $₹500").
+    expect(renderBody('${loser} paid ${amount}.', ctx)).toBe('Vedant paid ₹500.');
+    expect(renderBody('{loser} paid {amount}.', ctx)).toBe('Vedant paid ₹500.');
+  });
+
+  it('result header separates the club score from the player payment', () => {
     const s = statPrefix(ctx);
-    expect(s).toContain('Harshal 0–1 Vedant');
-    expect(s).toContain('5–1 to Harshal');
-    expect(s).toContain('−₹2,000');
+    expect(s).toContain('Real Madrid 0–1 Real Betis'); // clubs, home first
+    expect(s).toContain('La Liga');
+    expect(s).toContain('Vedant pays Harshal ₹500');   // players, money
+    expect(s).toContain('Head to head: Harshal leads 5–1');
+    expect(s).not.toContain('on the season');          // standings photo covers it
+    expect(s).not.toContain('#');                      // no template id
+  });
+
+  it('a draw moves no money', () => {
+    const s = statPrefix({ ...ctx, margin: 0, homeScore: '1–1' });
+    expect(s).toContain('Draw. No money moves.');
+    expect(s).not.toContain('pays');
   });
 });

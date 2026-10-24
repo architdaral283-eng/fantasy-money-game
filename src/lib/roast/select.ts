@@ -5,6 +5,7 @@ export interface RoastContext {
   loserClub: string; winnerClub: string;
   loserClubId: string; winnerClubId: string;
   score: string; margin: number; amount: number; competition: string;
+  homeClub: string; awayClub: string; homeScore: string;
   loserPick: number; winnerPick: number;
   h2h: string; loserNet: number; winnerNet: number; owed: number;
   streakLosses: number; marquee: string; manager: string; rank: number;
@@ -109,7 +110,7 @@ export function renderBody(body: string, ctx: RoastContext): string {
     streak: streakWord, marquee: ctx.marquee, manager: ctx.manager,
     rank: String(ctx.rank),
   };
-  return body.replace(/\{(\w+)\}/g, (m, k) => slots[k] ?? m);
+  return body.replace(/\$?\{(\w+)\}/g, (m, k) => slots[k] ?? m);
 }
 
 function ordinal(n: number): string {
@@ -120,7 +121,22 @@ function inr(n: number): string {
   return `${n < 0 ? '−' : '+'}₹${Math.abs(n).toLocaleString('en-IN')}`;
 }
 
-/** Auto-generated stat block: always unique, leads every roast. */
+/**
+ * Result header. The score belongs to the CLUBS, the money to the PLAYERS —
+ * the old one-liner conflated them ("Anmol 2-1 Harshal · Manchester City"),
+ * which is what made it unreadable. Season totals are deliberately absent:
+ * the standings photo is posted immediately after this message.
+ */
 export function statPrefix(ctx: RoastContext): string {
-  return `${ctx.winner} ${ctx.score} ${ctx.loser} · ${ctx.loserClub} · ₹${ctx.amount.toLocaleString('en-IN')}\nRivalry now ${ctx.h2h}. ${ctx.loser} ${inr(ctx.loserNet)} on the season.`;
+  const money = ctx.margin === 0
+    ? 'Draw. No money moves.'
+    : `${ctx.loser} pays ${ctx.winner} ₹${ctx.amount.toLocaleString('en-IN')}`;
+  return [
+    `${ctx.homeClub} ${ctx.homeScore} ${ctx.awayClub}`,
+    ctx.competition,
+    '',
+    money,
+    '',
+    `Head to head: ${ctx.h2h}`,
+  ].join('\n');
 }

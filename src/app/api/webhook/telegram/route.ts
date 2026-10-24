@@ -528,7 +528,8 @@ export async function fireRoast(db: ReturnType<typeof supabaseService>, fixtureI
   const pick = pickTemplate(pool.length ? pool : templates, built.ctx, Date.now());
   if (!pick) return statPrefix(built.ctx);
   await db.from('roast_templates').update({ use_count: pick.use_count + 1, last_used_at: new Date().toISOString() }).eq('id', pick.id);
-  const text = `${statPrefix(built.ctx)}\n\n${renderBody(pick.body, built.ctx)}\n\n#${pick.id}`;
+  // no trailing "#<id>": that was for /roastkill, which no longer exists
+  const text = `${statPrefix(built.ctx)}\n\n${renderBody(pick.body, built.ctx)}`;
   if (eventId) {
     await db.from('roast_events').update({ template_ids: [...exclude, pick.id], reroll_count: latest.reroll_count + 1 }).eq('id', eventId);
   } else {
