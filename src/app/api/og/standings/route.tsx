@@ -10,7 +10,10 @@ export const dynamic = 'force-dynamic';
  * SATORI RULE: every <div> here must have EXACTLY ONE child, or carry an
  * explicit `display: flex`. JSX turns `{a}W {b}L` into several children, which
  * made next/og log: Expected <div> to have explicit "display: flex".
- * Keep interpolated text as a single template string.
+ * Keep interpolated text as a single template string — and that means STRING:
+ * a bare number child (`{i + 1}`) trips the same error in this Satori build.
+ * That one survived the first fix, so the image rendered 0 bytes on every
+ * request and the standings photo never reached the group.
  */
 export async function GET() {
   const db = supabaseService();
@@ -35,7 +38,7 @@ export async function GET() {
         <div style={{ fontSize: 54, fontWeight: 800, margin: '8px 0 24px', letterSpacing: -1 }}>Standings</div>
         {rows.map((r, i) => (
           <div key={r.id} style={{ display: 'flex', fontSize: 32, padding: '14px 0', borderBottom: '2px solid #DCE2D8', background: i % 2 ? '#F1F4EF' : '#FFFFFF' }}>
-            <div style={{ width: 60 }}>{i + 1}</div>
+            <div style={{ width: 60 }}>{String(i + 1)}</div>
             <div style={{ width: 300 }}>{r.name}</div>
             <div style={{ width: 220, color: Number(r.net_inr) >= 0 ? '#10281B' : '#C8102E', fontWeight: 600 }}>
               {`${Number(r.net_inr) >= 0 ? '+' : '−'}₹${Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}`}

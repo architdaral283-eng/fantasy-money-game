@@ -369,7 +369,6 @@ export async function POST(req: Request) {
           const { refreshPin, fireRoast } = await import('@/app/api/webhook/telegram/route');
           await approveProposal(db, (approval as { id: string }).id, 'archit');
           summary.autoWritten++;
-          const scoreline = `${fixture.home_club_id} ${swapped ? r.scoreAt90.away : r.scoreAt90.home}-${swapped ? r.scoreAt90.home : r.scoreAt90.away} ${fixture.away_club_id}`;
           await refreshPin(db);
 
           // ORDER MATTERS. The result + taunt goes FIRST, then the standings
@@ -400,7 +399,14 @@ export async function POST(req: Request) {
           const tat = process.env.TELEGRAM_BOT_TOKEN ? new TA(process.env.TELEGRAM_BOT_TOKEN) : null;
           const architChat = await architChatId();
           if (tat && architChat) {
-            await tat.send(architChat, 'result_recorded', { text: `Recorded automatically. ${scoreline}.` }).catch(() => undefined);
+            const { data: cn } = await db.from('clubs').select('id,name').in('id', [fixture.home_club_id, fixture.away_club_id]);
+            const nm = new Map(((cn ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]));
+            const hs = swapped ? r.scoreAt90.away : r.scoreAt90.home;
+            const as = swapped ? r.scoreAt90.home : r.scoreAt90.away;
+            const via = r.provider === 'espn' ? ' (from ESPN — football-data had not confirmed it)' : '';
+            await tat.send(architChat, 'result_recorded', {
+              text: `Recorded automatically: ${nm.get(fixture.home_club_id) ?? fixture.home_club_id} ${hs}–${as} ${nm.get(fixture.away_club_id) ?? fixture.away_club_id}${via}.`,
+            }).catch(() => undefined);
           }
           continue;
         } catch (e) {
@@ -547,7 +553,15 @@ export async function POST(req: Request) {
   }
 
   // release anything queued through quiet hours or the daily ceiling
-  const drained = await drainQueue(db).catch(() => ({ released: 0 }));
+  // Without a fetcher drainQueue skips queued photos forever, so a standings
+  // image raised during quiet hours was never sent. Render it fresh at release.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app';
+  const drained = await drainQueue(db, async () => {
+    const res = await fetch(`${appUrl}/api/og/standings`, { cache: 'no-store' });
+    const png = await res.arrayBuffer();
+    if (!res.ok || png.byteLength < 1000) throw new Error(`og/standings ${res.status}, ${png.byteLength} bytes`);
+    return png;
+  }).catch(() => ({ released: 0 }));
 
   // 30-minute pre-match group warning — time-sensitive by definition, always immediate
   const { data: soon } = await db.from('fixtures').select('id,competition_id,home_club_id,away_club_id,kickoff_utc,round')
