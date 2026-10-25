@@ -191,6 +191,13 @@ they are drawn (announcing each in the group) and proposes finished ones.
   UNIQUE(competition, round, home, away) — and money was proposed on matches
   settled in August. A missed tie is a /report away; a duplicate is a wrong
   ledger entry. `cup-match.test.ts` holds the decision table.
+- **Cups run in their own route and their own cron job**: `/api/cron/cups`,
+  every 15 minutes (migration 0021). They are NOT part of `/api/cron/poll`. A
+  full schedule sync in the poller already spends ~60s on football-data's 6.5s
+  call spacing; everything in one handler shares one function timeout, so the
+  combined version returned nothing at all — no results, no reminders, no sync
+  — and the only evidence was a NULL row in `net._http_response` where every
+  other tick has a 200. **Check that table after any change to a cron route.**
 - **The cup pass has a request budget and a 20s deadline.** The first version
   fetched 6 cups × 18 dates sequentially on a schedule sync; the poll function
   timed out and the ENTIRE tick returned nothing — no results, no reminders.
