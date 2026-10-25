@@ -523,15 +523,51 @@ export async function POST(req: Request) {
 
       for (const m of found) {
         const round = espnRound(m.note);
-        // Our row for this tie, in either venue order.
+        // Our row for this tie, in EITHER venue order.
+        //
+        // This matching is the whole safety of the cup pass. The first version
+        // required a kickoff within 36h or an exact round match; a tie entered
+        // by hand has a NULL kickoff (Date.parse(null) is NaN, so every
+        // comparison is false) and whatever round label the person typed. Both
+        // tests failed, so it inserted a SECOND row for a tie already played —
+        // with ESPN's venue order, which the UNIQUE(competition, round, home,
+        // away) index therefore did not catch — and then proposed money on a
+        // match that was settled in August.
+        //
+        // So: find by club pair first, and if the pair already has a RECORDED
+        // meeting here that nothing else matches, do nothing at all. A missed
+        // cup tie is a /report away; a duplicate is a wrong ledger entry.
         const { data: rows } = await db.from('fixtures').select('id,round,status,kickoff_utc,home_club_id,away_club_id')
           .eq('competition_id', compId)
           .in('home_club_id', [m.homeClubId, m.awayClubId])
           .in('away_club_id', [m.homeClubId, m.awayClubId]);
-        let fx = ((rows ?? []) as { id: string; round: string; status: string; kickoff_utc: string | null; home_club_id: string; away_club_id: string }[])
-          .find((f) => Math.abs(Date.parse(f.kickoff_utc ?? '') - Date.parse(m.kickoffUtc)) < 36 * 3600 * 1000)
-          ?? ((rows ?? []) as { id: string; round: string; status: string; kickoff_utc: string | null; home_club_id: string; away_club_id: string }[])
-            .find((f) => f.round === round);
+        type FxRow = { id: string; round: string; status: string; kickoff_utc: string | null; home_club_id: string; away_club_id: string };
+        const pairRows = (rows ?? []) as FxRow[];
+        const nearDate = (f: FxRow) => {
+          const k = Date.parse(f.kickoff_utc ?? '');
+          return Number.isFinite(k) && Math.abs(k - Date.parse(m.kickoffUtc)) < 36 * 3600 * 1000;
+        };
+        let fx: FxRow | undefined =
+          pairRows.find(nearDate)
+          ?? pairRows.find((f) => f.round === round)
+          // an undated row entered by hand, or seeded, waiting to be matched
+          ?? pairRows.find((f) => f.status !== 'RECORDED' && !f.kickoff_utc);
+
+        if (!fx && pairRows.length) {
+          // The pair has history here and none of it is this tie as far as we
+          // can tell. Never invent a second fixture on a guess.
+          summary.errors.push(`cup ${compId}: ${m.homeClubId} v ${m.awayClubId} (${round}, ${m.kickoffUtc}) already has ${pairRows.length} row(s); not inserting`);
+          continue;
+        }
+
+        if (fx && (!fx.kickoff_utc || fx.round !== round) && fx.status !== 'RECORDED') {
+          // adopt the hand-entered row rather than duplicating it
+          await db.from('fixtures').update({
+            kickoff_utc: new Date(m.kickoffUtc).toISOString(),
+            ...(fx.round === round ? {} : { round }),
+          }).eq('id', fx.id);
+          fx = { ...fx, kickoff_utc: new Date(m.kickoffUtc).toISOString(), round };
+        }
 
         if (!fx) {
           const sameOwner = ownerOf(m.homeClubId) === ownerOf(m.awayClubId);
@@ -551,7 +587,7 @@ export async function POST(req: Request) {
             competition_id: compId, kickoff_utc: new Date(m.kickoffUtc).toISOString(), round,
           }, 'drawn'));
           fx = ins as unknown as typeof fx;
-        } else if (fx.kickoff_utc && Date.parse(fx.kickoff_utc) !== Date.parse(m.kickoffUtc) && fx.status === 'SCHEDULED') {
+        } else if (fx && fx.kickoff_utc && Date.parse(fx.kickoff_utc) !== Date.parse(m.kickoffUtc) && fx.status === 'SCHEDULED') {
           // rescheduled → reminders must fire again for the new time
           await db.from('fixtures').update({
             kickoff_utc: new Date(m.kickoffUtc).toISOString(), round,

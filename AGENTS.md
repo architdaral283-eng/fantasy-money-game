@@ -182,6 +182,15 @@ they are drawn (announcing each in the group) and proposes finished ones.
   enter the score or the margin. A level shootout returns null.
 - Outside the daily schedule sync the cup pass only runs when one of our cup
   fixtures is actually due a result — ESPN is unofficial, don't hammer it.
+- **Matching a cup tie is the dangerous part.** Find our row by competition +
+  UNORDERED club pair, then: kickoff within 36h → same round → an undated,
+  unrecorded row (adopt it: fill in kickoff and round). If the pair has rows
+  and none fits, SKIP — never insert. The first version matched only on date
+  or exact round, so two hand-entered one-off cups (NULL kickoff, different
+  round label) got duplicate rows in ESPN's venue order — which slipped past
+  UNIQUE(competition, round, home, away) — and money was proposed on matches
+  settled in August. A missed tie is a /report away; a duplicate is a wrong
+  ledger entry. `cup-match.test.ts` holds the decision table.
 - **The cup pass has a request budget and a 20s deadline.** The first version
   fetched 6 cups × 18 dates sequentially on a schedule sync; the poll function
   timed out and the ENTIRE tick returned nothing — no results, no reminders.
