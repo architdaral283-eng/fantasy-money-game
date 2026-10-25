@@ -186,6 +186,10 @@ describe('cups', () => {
     expect(espnRound('Round of 16')).toBe('Round of 16');
     expect(espnRound('Round 3')).toBe('Round 3');
     expect(espnRound(null)).toBe('Cup tie');
+    // a one-off cup has no round notes, so ESPN hands back the season slug
+    expect(espnRound('2026-english-fa-community-shield')).toBe('Cup tie');
+    expect(espnRound('2026-franz-beckenbauer-supercup')).toBe('Cup tie');
+    expect(espnRound('Final Round')).toBe('Final');
   });
 
   it('every ESPN-only cup has a league slug and an engine code', () => {

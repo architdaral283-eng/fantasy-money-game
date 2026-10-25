@@ -241,13 +241,16 @@ export const ENGINE_CODE: Record<string, string> = {
 /** ESPN's round name for a tie, humanised to match what the fixtures table stores. */
 export function espnRound(name: string | null | undefined): string {
   const s = String(name ?? '').toLowerCase();
-  if (/final/.test(s) && !/semi|quarter/.test(s)) return 'Final';
   if (/semi/.test(s)) return 'Semi-final';
   if (/quarter/.test(s)) return 'Quarter-final';
   if (/round of 16|last 16/.test(s)) return 'Round of 16';
   const m = s.match(/round\s*(\d+)/);
   if (m) return `Round ${m[1]}`;
-  return name ? String(name) : 'Cup tie';
+  if (/final/.test(s)) return 'Final';
+  // A one-off cup has no round notes, so ESPN falls back to the season slug
+  // ("2026-english-fa-community-shield"). Never print that at a human.
+  if (!s || /^[a-z0-9]+(-[a-z0-9]+){2,}$/.test(s)) return 'Cup tie';
+  return String(name);
 }
 
 /**
