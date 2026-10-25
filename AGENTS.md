@@ -182,6 +182,13 @@ they are drawn (announcing each in the group) and proposes finished ones.
   enter the score or the margin. A level shootout returns null.
 - Outside the daily schedule sync the cup pass only runs when one of our cup
   fixtures is actually due a result — ESPN is unofficial, don't hammer it.
+- **The cup pass has a request budget and a 20s deadline.** The first version
+  fetched 6 cups × 18 dates sequentially on a schedule sync; the poll function
+  timed out and the ENTIRE tick returned nothing — no results, no reminders.
+  `espnCupSweep` fetches dates concurrently and stops at the deadline; a cup
+  skipped this tick is picked up on the next one. Anything added to the poller
+  must respect that: the whole handler shares one function timeout, so a slow
+  new source silently kills every job above it.
 - **API-Football is no longer used.** `src/lib/providers/api-football.ts`
   remains for reference; `API_FOOTBALL_KEY` is dead config and can be removed
   from Vercel.

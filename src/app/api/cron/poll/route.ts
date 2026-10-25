@@ -10,7 +10,7 @@ import { drainQueue, architAwake, sendGroup } from '@/lib/notify/quiet';
 import { fixtureNotice, isTodayIST } from '@/lib/notify/fixture-notice';
 import {
   espnScoreboard, espnDateOf, findMatch, toNormalised, goalsMatching,
-  ESPN_ONLY_COMPS, ENGINE_CODE, espnRound, cupDates, type EspnMatch, type Goal,
+  ESPN_ONLY_COMPS, ENGINE_CODE, espnRound, cupDates, espnCupSweep, type EspnMatch, type Goal,
 } from '@/lib/providers/espn';
 
 function authed(req: Request): boolean {
@@ -507,21 +507,21 @@ export async function POST(req: Request) {
     .eq('status', 'SCHEDULED')
     .lt('kickoff_utc', new Date(nowMs - 100 * 60 * 1000).toISOString())
     .gte('kickoff_utc', new Date(nowMs - 7 * 24 * 3600 * 1000).toISOString());
+  // Hard deadline for the whole cup pass. Everything above it has already run;
+  // a cup skipped here is picked up on the next tick, which is far better than
+  // the function timing out and the entire poll returning nothing.
+  const cupDeadline = Date.now() + 20_000;
   for (const compId of (doScheduleSync || (cupDue ?? 0) > 0) ? ESPN_ONLY_COMPS : []) {
     const code = ENGINE_CODE[compId];
     try {
+      if (Date.now() > cupDeadline) { summary.errors.push(`cup ${compId}: skipped, out of time this tick`); continue; }
       const dates: (string | undefined)[] = [undefined];
       if (doScheduleSync) dates.push(...cupDates(nowMs));
-      const seen = new Map<string, EspnMatch>();
-      for (const d of dates) {
-        for (const m of await espnScoreboard(compId, d)) {
-          if (!seen.has(m.espnId)) seen.set(m.espnId, m);
-        }
-      }
-      if (!seen.size) continue;
+      const found = await espnCupSweep(compId, dates, { deadlineMs: cupDeadline });
+      if (!found.length) continue;
       await db.from('api_call_log').insert({ provider: 'espn', endpoint: `cup:${compId}` });
 
-      for (const m of seen.values()) {
+      for (const m of found) {
         const round = espnRound(m.note);
         // Our row for this tie, in either venue order.
         const { data: rows } = await db.from('fixtures').select('id,round,status,kickoff_utc,home_club_id,away_club_id')

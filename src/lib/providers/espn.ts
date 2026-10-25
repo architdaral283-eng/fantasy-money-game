@@ -255,8 +255,31 @@ export function espnRound(name: string | null | undefined): string {
  * found the moment it is drawn), and the recent past (so a result is not
  * missed if nothing ran). Plus one undated call for the current round.
  */
-export function cupDates(nowMs: number, days = 14, back = 3): string[] {
+export function cupDates(nowMs: number, days = 10, back = 2): string[] {
   const out: string[] = [];
   for (let d = -back; d <= days; d++) out.push(espnDateOf(new Date(nowMs + d * 864e5).toISOString()));
   return [...new Set(out)];
+}
+
+/**
+ * One cup, many dates, fetched CONCURRENTLY and de-duplicated by match id.
+ *
+ * Sequentially this was ~108 requests per schedule sync across six cups, which
+ * ran the poller past its function timeout: the whole tick returned nothing and
+ * no work at all got done. Concurrency plus a deadline keeps the cup pass to a
+ * couple of seconds, and a slow cup is skipped rather than killing the run.
+ */
+export async function espnCupSweep(
+  compId: string,
+  dates: (string | undefined)[],
+  opts: { concurrency?: number; deadlineMs?: number } = {},
+): Promise<EspnMatch[]> {
+  const { concurrency = 8, deadlineMs } = opts;
+  const seen = new Map<string, EspnMatch>();
+  for (let i = 0; i < dates.length; i += concurrency) {
+    if (deadlineMs !== undefined && Date.now() > deadlineMs) break;
+    const batch = await Promise.all(dates.slice(i, i + concurrency).map((d) => espnScoreboard(compId, d)));
+    for (const list of batch) for (const m of list) if (!seen.has(m.espnId)) seen.set(m.espnId, m);
+  }
+  return [...seen.values()];
 }

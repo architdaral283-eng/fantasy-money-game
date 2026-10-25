@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseScoreboard, findMatch, toNormalised, goalsMatching, espnDateOf, espnRound, cupDates, minuteOf, ESPN_ONLY_COMPS, ENGINE_CODE, ESPN_LEAGUE } from '@/lib/providers/espn';
+import { parseScoreboard, findMatch, toNormalised, goalsMatching, espnDateOf, espnRound, cupDates, espnCupSweep, minuteOf, ESPN_ONLY_COMPS, ENGINE_CODE, ESPN_LEAGUE } from '@/lib/providers/espn';
 import { scorerLines } from '@/lib/notify/format';
 
 // Trimmed from the live feed: ita.1 scoreboard, 24 Oct 2026, event 401874948.
@@ -201,5 +201,47 @@ describe('cups', () => {
     expect(d).toContain('20261021');
     expect(d).toContain('20261107');
     expect(new Set(d).size).toBe(d.length);
+  });
+});
+
+
+describe('cup sweep budget', () => {
+  it('scans a bounded window, not a month', () => {
+    // 108 sequential requests per sync timed the whole poller out once.
+    const perCup = cupDates(Date.now()).length + 1; // + the undated call
+    expect(perCup * ESPN_ONLY_COMPS.length).toBeLessThanOrEqual(90);
+  });
+
+  it('stops at the deadline instead of running the poller out of time', async () => {
+    const origFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; await new Promise((r) => setTimeout(r, 15)); return { ok: true, json: async () => ({ events: [] }) }; }) as unknown as typeof fetch;
+    try {
+      const dates = Array.from({ length: 40 }, (_, i) => `2026110${i % 10}`);
+      await espnCupSweep('facup', dates, { concurrency: 4, deadlineMs: Date.now() + 40 });
+      expect(calls).toBeGreaterThan(0);
+      expect(calls).toBeLessThan(40); // gave up early rather than finishing
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it('de-duplicates the same tie seen on several dates', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: true, json: async () => ({ events: [{
+      id: 'dup-1', date: '2027-01-10T15:00Z',
+      status: { type: { name: 'STATUS_SCHEDULED', completed: false } },
+      competitions: [{ competitors: [
+        { homeAway: 'home', score: '0', team: { id: '359' } },
+        { homeAway: 'away', score: '0', team: { id: '382' } },
+      ], details: [] }],
+    }] }) })) as unknown as typeof fetch;
+    try {
+      const out = await espnCupSweep('facup', ['20270110', '20270111', '20270112']);
+      expect(out).toHaveLength(1);
+      expect(out[0]).toMatchObject({ homeClubId: 'arsenal', awayClubId: 'man-city' });
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });
