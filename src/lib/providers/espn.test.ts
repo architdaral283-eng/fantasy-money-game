@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseScoreboard, findMatch, toNormalised, goalsMatching, espnDateOf } from '@/lib/providers/espn';
+import { parseScoreboard, findMatch, toNormalised, goalsMatching, espnDateOf, espnRound, cupDates, minuteOf, ESPN_ONLY_COMPS, ENGINE_CODE, ESPN_LEAGUE } from '@/lib/providers/espn';
 import { scorerLines } from '@/lib/notify/format';
 
 // Trimmed from the live feed: ita.1 scoreboard, 24 Oct 2026, event 401874948.
@@ -77,12 +77,19 @@ describe('matching and conversion', () => {
     expect(findMatch([m], 'napoli', 'inter', '2026-10-24T16:00:00Z')).toBeNull();
   });
 
-  it('only a plain full-time finish becomes a result, tagged espn, with no football-data id', () => {
+  it('a full-time finish is a 90-minute result, tagged espn, with no football-data id', () => {
     const n = toNormalised(m, 'SERIE_A', 'League');
-    expect(n).toMatchObject({ scoreAt90: { home: 3, away: 3 }, terminalStatus: 'FT', provider: 'espn' });
+    expect(n).toMatchObject({ scoreAt90: { home: 3, away: 3 }, scoreAt120: null, terminalStatus: 'FT', provider: 'espn' });
     expect(n?.providerFixtureId).toBeUndefined();
-    expect(toNormalised({ ...m, status: 'STATUS_FINAL_AET' }, 'UCL', 'Final')).toBeNull();
     expect(toNormalised({ ...m, completed: false, status: 'STATUS_SECOND_HALF' }, 'SERIE_A', 'League')).toBeNull();
+  });
+
+  it('the same match reported as AET is read as 120 minutes, not 90', () => {
+    // all six goals are inside 90', so extra time added nothing
+    const n = toNormalised({ ...m, status: 'STATUS_FINAL_AET' }, 'UCL', 'Final')!;
+    expect(n.terminalStatus).toBe('AET');
+    expect(n.scoreAt90).toEqual({ home: 3, away: 3 });
+    expect(n.scoreAt120).toEqual({ home: 3, away: 3 });
   });
 
   it('keeps scorers only when they match the score actually being written', () => {
@@ -111,5 +118,88 @@ describe('scorer lines', () => {
     );
     expect(lines).toEqual(["AS Roma: F. Bernardeschi 80' (pen), D. Carlos (og) 58'"]);
     expect(scorerLines([], { id: 'a', name: 'A' }, { id: 'b', name: 'B' })).toEqual([]);
+  });
+});
+
+
+describe('cups', () => {
+  // A cup tie that went to extra time and penalties. ESPN's score is at 120';
+  // the 90' score has to come back out of the goal minutes.
+  const tie = (over: Record<string, unknown> = {}) => parseScoreboard({ events: [{
+    id: '999', date: '2027-02-10T20:00Z',
+    status: { type: { name: 'STATUS_FINAL_PEN', completed: true } },
+    competitions: [{
+      competitors: [
+        { homeAway: 'home', score: '2', team: { id: '359' } },   // Arsenal
+        { homeAway: 'away', score: '2', team: { id: '382' } },   // Man City
+      ],
+      notes: [{ headline: 'Quarterfinals' }],
+      details: [
+        goal("12'", '359', 'B. Saka'),
+        goal("90'+4'", '382', 'E. Haaland'),
+        goal("105'", '359', 'K. Havertz'),
+        goal("118'", '382', 'P. Foden'),
+        goal('', '359', 'B. Saka', { shootout: true }),
+        goal('', '359', 'M. Ødegaard', { shootout: true }),
+        goal('', '382', 'P. Foden', { shootout: true }),
+      ],
+      ...(over.competitions as object ?? {}),
+    }],
+    ...over,
+  }] })[0];
+
+  it('separates shootout kicks from the score and keeps the round label', () => {
+    const m = tie();
+    expect(m).toMatchObject({ home: 2, away: 2, shootout: { home: 2, away: 1 }, note: 'Quarterfinals' });
+    expect(m.goals).toHaveLength(4); // shootout kicks are not goals
+  });
+
+  it('recovers the 90-minute score from the goal minutes, stoppage included', () => {
+    const n = toNormalised(tie(), 'FA_CUP', 'Quarter-final')!;
+    expect(n).toMatchObject({
+      terminalStatus: 'PEN',
+      scoreAt90: { home: 1, away: 1 },    // 12' and 90'+4'
+      scoreAt120: { home: 2, away: 2 },   // plus 105' and 118'
+      shootout: { home: 2, away: 1 },
+      provider: 'espn',
+    });
+  });
+
+  it('scores extra time without penalties as AET', () => {
+    const m = { ...tie(), status: 'STATUS_FINAL_AET', shootout: null, home: 2, away: 1 };
+    m.goals = m.goals.filter((g) => !(g.clubId === 'man-city' && minuteOf(g) > 90));
+    const n = toNormalised(m, 'FA_CUP', 'Quarter-final')!;
+    expect(n.terminalStatus).toBe('AET');
+    expect(n.scoreAt120).toEqual({ home: 2, away: 1 });
+  });
+
+  it('refuses to guess: a level shootout, or extra time with no goal list', () => {
+    expect(toNormalised({ ...tie(), shootout: { home: 3, away: 3 } }, 'FA_CUP', 'Final')).toBeNull();
+    expect(toNormalised({ ...tie(), goals: [] }, 'FA_CUP', 'Final')).toBeNull();
+    expect(toNormalised({ ...tie(), completed: false, status: 'STATUS_SECOND_HALF' }, 'FA_CUP', 'Final')).toBeNull();
+  });
+
+  it('humanises ESPN round names', () => {
+    expect(espnRound('Quarterfinals')).toBe('Quarter-final');
+    expect(espnRound('Semifinals')).toBe('Semi-final');
+    expect(espnRound('Final')).toBe('Final');
+    expect(espnRound('Round of 16')).toBe('Round of 16');
+    expect(espnRound('Round 3')).toBe('Round 3');
+    expect(espnRound(null)).toBe('Cup tie');
+  });
+
+  it('every ESPN-only cup has a league slug and an engine code', () => {
+    for (const c of ESPN_ONLY_COMPS) {
+      expect(ESPN_LEAGUE[c], c).toBeTruthy();
+      expect(ENGINE_CODE[c], c).toBeTruthy();
+    }
+  });
+
+  it('scans a window around today, de-duplicated', () => {
+    const d = cupDates(Date.parse('2026-10-24T12:00:00Z'), 14, 3);
+    expect(d).toContain('20261024');
+    expect(d).toContain('20261021');
+    expect(d).toContain('20261107');
+    expect(new Set(d).size).toBe(d.length);
   });
 });

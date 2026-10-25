@@ -165,6 +165,27 @@ format change and read the output before shipping.
 - ESPN team ids live in `TEAM_ID_MAP.espn`. Same rule as the others: no name
   matching at runtime.
 
+## Cups are ESPN-only
+
+football-data's free tier carries no domestic cup, so ESPN is the sole source
+for the FA Cup, Copa del Rey, Coppa Italia, DFB-Pokal, Community Shield and
+DFL-Supercup (`ESPN_ONLY_COMPS`). One pass in the poller both inserts ties as
+they are drawn (announcing each in the group) and proposes finished ones.
+
+- **Nothing from a cup is ever auto-written.** Every cup tie is a knockout, so
+  each result goes to Archit as an Approve/Reject proposal. One tap writes it
+  and posts the result + standings exactly like an auto-written one.
+- **Extra time:** ESPN's final score IS the 120' score. The 90' score is
+  derived from the goal minutes (`minuteOf`, stoppage folded back). No usable
+  goal list → `toNormalised` returns null and the fixture waits. Never guess.
+- **Penalties:** shootout kicks are counted from `details[].shootout` and never
+  enter the score or the margin. A level shootout returns null.
+- Outside the daily schedule sync the cup pass only runs when one of our cup
+  fixtures is actually due a result — ESPN is unofficial, don't hammer it.
+- **API-Football is no longer used.** `src/lib/providers/api-football.ts`
+  remains for reference; `API_FOOTBALL_KEY` is dead config and can be removed
+  from Vercel.
+
 ## Draws
 
 A draw has no loser. `condMatch()` gives draws only lines with

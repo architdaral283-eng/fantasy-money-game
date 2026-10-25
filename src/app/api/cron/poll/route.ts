@@ -4,11 +4,14 @@ import { FootballDataOrgProvider, normalizeRound, isKnockoutRound } from '@/lib/
 import { mappingConfirmed } from '@/lib/providers/team-ids';
 import { scoreSingleFixture, type NormalisedResult } from '@/lib/scoring/engine';
 import { ownerOf } from '@/lib/domain/constants';
-import { fanOutText } from '@/lib/notify/send';
+import { fanOutText, notifyArchitApproval } from '@/lib/notify/send';
 import { dueReminders } from '@/lib/notify/send';
 import { drainQueue, architAwake, sendGroup } from '@/lib/notify/quiet';
 import { fixtureNotice, isTodayIST } from '@/lib/notify/fixture-notice';
-import { espnScoreboard, espnDateOf, findMatch, toNormalised, goalsMatching, type EspnMatch, type Goal } from '@/lib/providers/espn';
+import {
+  espnScoreboard, espnDateOf, findMatch, toNormalised, goalsMatching,
+  ESPN_ONLY_COMPS, ENGINE_CODE, espnRound, cupDates, type EspnMatch, type Goal,
+} from '@/lib/providers/espn';
 
 function authed(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -480,66 +483,153 @@ export async function POST(req: Request) {
   // knockouts, so results stay on /report, which the constitution already
   // specifies for cups.
   //
-  // Free tier is 100 calls/day. This runs only on the daily schedule sync:
-  // 4 calls a day.
-  const CUP_COMPS = ['FA_CUP', 'COPA_DEL_REY', 'COPPA_ITALIA', 'DFB_POKAL'] as const;
-  const CUP_ID: Record<string, string> = {
-    FA_CUP: 'facup', COPA_DEL_REY: 'copadelrey', COPPA_ITALIA: 'coppa', DFB_POKAL: 'dfbpokal',
-  };
+  // ——— cups: ESPN is the only source ———
+  // football-data's free tier carries no domestic cup at all, so without this
+  // an FA Cup / Copa del Rey / Coppa Italia / DFB-Pokal tie between two of the
+  // sixteen clubs would never appear and never be recorded.
+  //
+  // One pass does both jobs for each cup: it inserts ties that have been drawn
+  // (announcing each in the group) and turns finished ones into proposals.
+  // Every cup tie is a knockout, so nothing here is ever auto-written — the
+  // knockout gate below routes them all to the Commissioner's Approve button.
+  // Extra time and penalties are read from ESPN's goal list; anything that
+  // does not add up is left alone rather than guessed at.
+  //
+  // Dates are only scanned on the daily schedule sync. Otherwise this is one
+  // undated call per cup (ESPN's current round), which is what catches a
+  // result on the day it is played.
   let cupsFound = 0;
-  if (doScheduleSync && process.env.API_FOOTBALL_KEY) {
+  let cupResults = 0;
+  // Don't poke an unofficial feed 288 times a day for nothing: outside the
+  // daily sync, only ask when one of our cup ties is actually due a result.
+  const { count: cupDue } = await db.from('fixtures').select('id', { count: 'exact', head: true })
+    .in('competition_id', [...ESPN_ONLY_COMPS])
+    .eq('status', 'SCHEDULED')
+    .lt('kickoff_utc', new Date(nowMs - 100 * 60 * 1000).toISOString())
+    .gte('kickoff_utc', new Date(nowMs - 7 * 24 * 3600 * 1000).toISOString());
+  for (const compId of (doScheduleSync || (cupDue ?? 0) > 0) ? ESPN_ONLY_COMPS : []) {
+    const code = ENGINE_CODE[compId];
     try {
-      const { count: afToday } = await db.from('api_call_log').select('id', { count: 'exact', head: true })
-        .eq('provider', 'api-football').gte('called_at', new Date(nowMs - 24 * 3600 * 1000).toISOString());
-      const used = afToday ?? 0;
-      const { ApiFootballProvider, apiFootballQuotaOk } = await import('@/lib/providers/api-football');
-      const quota = apiFootballQuotaOk(used, 100 - used);
-      if (!quota.ok) {
-        summary.errors.push(`api-football quota: ${quota.reason}`);
-      } else {
-        const af = new ApiFootballProvider(process.env.API_FOOTBALL_KEY);
-        const { sendGroup } = await import('@/lib/notify/quiet');
-        for (const code of CUP_COMPS) {
-          const sched = await af.listSchedule({ competitionCode: code, season: '2026' });
-          await db.from('api_call_log').insert({ provider: 'api-football', endpoint: `schedule:${code}` });
-          for (const c of sched) {
-            const round = c.stage || 'Cup';
-            const { data: have } = await db.from('fixtures').select('id,kickoff_utc')
-              .eq('competition_id', CUP_ID[code]).eq('round', round)
-              .eq('home_club_id', c.homeClubId).eq('away_club_id', c.awayClubId)
-              .maybeSingle();
-            if (have) {
-              const stored = Date.parse((have as { kickoff_utc: string | null }).kickoff_utc ?? '');
-              if (stored && stored !== Date.parse(c.kickoffUtc)) {
-                await db.from('fixtures').update({
-                  kickoff_utc: new Date(c.kickoffUtc).toISOString(),
-                  reminder_sent_at: null, pre_match_sent_at: null,
-                }).eq('id', (have as { id: string }).id);
-              }
-              continue;
-            }
-            const sameOwner = ownerOf(c.homeClubId) === ownerOf(c.awayClubId);
-            const { error: cupErr } = await db.from('fixtures').insert({
-              competition_id: CUP_ID[code], round,
-              home_club_id: c.homeClubId, away_club_id: c.awayClubId,
-              kickoff_utc: new Date(c.kickoffUtc).toISOString(),
-              provider_fixture_id: c.providerFixtureId,
-              status: 'SCHEDULED', is_same_owner: sameOwner,
-            });
-            if (cupErr && !/duplicate key/i.test(cupErr.message)) {
-              summary.errors.push(`cup insert ${code} ${c.homeClubId} v ${c.awayClubId}: ${cupErr.message}`);
-            } else if (!cupErr) {
-              cupsFound++;
-              await sendGroup(db, await fixtureNotice(db, {
-                home_club_id: c.homeClubId, away_club_id: c.awayClubId,
-                competition_id: CUP_ID[code], kickoff_utc: c.kickoffUtc ? new Date(c.kickoffUtc).toISOString() : null, round,
-              }, 'drawn'));
-            }
-          }
+      const dates: (string | undefined)[] = [undefined];
+      if (doScheduleSync) dates.push(...cupDates(nowMs));
+      const seen = new Map<string, EspnMatch>();
+      for (const d of dates) {
+        for (const m of await espnScoreboard(compId, d)) {
+          if (!seen.has(m.espnId)) seen.set(m.espnId, m);
         }
       }
+      if (!seen.size) continue;
+      await db.from('api_call_log').insert({ provider: 'espn', endpoint: `cup:${compId}` });
+
+      for (const m of seen.values()) {
+        const round = espnRound(m.note);
+        // Our row for this tie, in either venue order.
+        const { data: rows } = await db.from('fixtures').select('id,round,status,kickoff_utc,home_club_id,away_club_id')
+          .eq('competition_id', compId)
+          .in('home_club_id', [m.homeClubId, m.awayClubId])
+          .in('away_club_id', [m.homeClubId, m.awayClubId]);
+        let fx = ((rows ?? []) as { id: string; round: string; status: string; kickoff_utc: string | null; home_club_id: string; away_club_id: string }[])
+          .find((f) => Math.abs(Date.parse(f.kickoff_utc ?? '') - Date.parse(m.kickoffUtc)) < 36 * 3600 * 1000)
+          ?? ((rows ?? []) as { id: string; round: string; status: string; kickoff_utc: string | null; home_club_id: string; away_club_id: string }[])
+            .find((f) => f.round === round);
+
+        if (!fx) {
+          const sameOwner = ownerOf(m.homeClubId) === ownerOf(m.awayClubId);
+          const { data: ins, error: insErr } = await db.from('fixtures').insert({
+            competition_id: compId, round,
+            home_club_id: m.homeClubId, away_club_id: m.awayClubId,
+            kickoff_utc: new Date(m.kickoffUtc).toISOString(),
+            status: 'SCHEDULED', is_same_owner: sameOwner,
+          }).select('id,round,status,kickoff_utc,home_club_id,away_club_id').single();
+          if (insErr) {
+            if (!/duplicate key/i.test(insErr.message)) summary.errors.push(`cup insert ${compId} ${m.homeClubId} v ${m.awayClubId}: ${insErr.message}`);
+            continue;
+          }
+          cupsFound++;
+          await sendGroup(db, await fixtureNotice(db, {
+            home_club_id: m.homeClubId, away_club_id: m.awayClubId,
+            competition_id: compId, kickoff_utc: new Date(m.kickoffUtc).toISOString(), round,
+          }, 'drawn'));
+          fx = ins as unknown as typeof fx;
+        } else if (fx.kickoff_utc && Date.parse(fx.kickoff_utc) !== Date.parse(m.kickoffUtc) && fx.status === 'SCHEDULED') {
+          // rescheduled → reminders must fire again for the new time
+          await db.from('fixtures').update({
+            kickoff_utc: new Date(m.kickoffUtc).toISOString(), round,
+            reminder_sent_at: null, pre_match_sent_at: null,
+          }).eq('id', fx.id);
+        }
+        if (!fx || fx.status !== 'SCHEDULED') continue;
+        if (Date.parse(m.kickoffUtc) + 100 * 60 * 1000 > nowMs) continue;
+
+        const n = toNormalised(m, code, fx.round || round);
+        if (!n) continue;
+        const swapped = fx.home_club_id !== m.homeClubId;
+        const flip = (sc: { home: number; away: number } | null) => (sc && swapped ? { home: sc.away, away: sc.home } : sc);
+        const proposal = scoreSingleFixture({
+          ...n,
+          homeClubId: fx.home_club_id, awayClubId: fx.away_club_id,
+          scoreAt90: flip(n.scoreAt90)!, scoreAt120: flip(n.scoreAt120), shootout: flip(n.shootout),
+        });
+        if (proposal.kind === 'IGNORED_UNOWNED' || proposal.kind.startsWith('REJECTED')) continue;
+
+        const h = swapped ? m.away : m.home;
+        const a = swapped ? m.home : m.away;
+        if (proposal.kind === 'MANUAL_REVIEW') {
+          await db.from('pending_approvals').insert({
+            subject_type: 'FIXTURE', subject_id: fx.id,
+            proposed_payload: { source: 'poller-espn', review: true, provider: 'espn' },
+            computed_transfers: [], status: 'PENDING',
+            review_reason: proposal.reviewReason, single_source: true,
+          });
+          await fanOutText(db, 'manual_review_needed', `Manual review needed: ${fx.home_club_id} v ${fx.away_club_id} (${compId}). ${proposal.reviewReason}`);
+          continue;
+        }
+        if (proposal.kind === 'SAME_OWNER') {
+          await db.from('results').insert({
+            fixture_id: fx.id, h90: h, a90: a,
+            terminal_status: n.terminalStatus, provider: 'espn',
+            raw_payload: { provider: 'espn', espnId: m.espnId },
+          });
+          await db.from('fixtures').update({ status: 'RECORDED' }).eq('id', fx.id);
+          summary.autoLogged++;
+          continue;
+        }
+
+        const { data: approval } = await db.from('pending_approvals').insert({
+          subject_type: 'FIXTURE', subject_id: fx.id,
+          proposed_payload: {
+            source: 'poller-espn', line: null, provider: 'espn',
+            homeClubId: fx.home_club_id, awayClubId: fx.away_club_id,
+            homeOwner: ownerOf(fx.home_club_id), awayOwner: ownerOf(fx.away_club_id),
+            competitionCode: code, round: fx.round || round,
+            score: { h, a },
+            winnerPlayer: proposal.winnerPlayer, loserPlayer: proposal.loserPlayer,
+            isDraw: proposal.isDraw, margin: proposal.margin, amount: proposal.amount,
+            kind: proposal.kind, terminalStatus: n.terminalStatus,
+            goals: goalsMatching(m.goals, fx.home_club_id, h, fx.away_club_id, a),
+          },
+          computed_transfers: proposal.transfers.map((t) => ({
+            ...t, fixture_id: fx!.id,
+            description: `${fx!.home_club_id} v ${fx!.away_club_id} (${code})`,
+          })),
+          status: 'PENDING', single_source: true,
+        }).select('id').single();
+        if (!approval) continue;
+        await db.from('fixtures').update({ status: 'PENDING_APPROVAL' }).eq('id', fx.id);
+        summary.proposed++;
+        cupResults++;
+
+        // Knockout: never auto-written. One tap from Archit writes it, through
+        // the same Approve/Reject buttons every other proposal uses.
+        const pens = n.shootout ? ` (pens ${n.shootout.home}–${n.shootout.away})` : '';
+        const et = n.terminalStatus === 'AET' ? ' after extra time' : '';
+        const money = proposal.isDraw ? 'Draw, nothing moves.' : `₹${proposal.amount} ${proposal.winnerPlayer} from ${proposal.loserPlayer}.`;
+        await notifyArchitApproval(db, (approval as { id: string }).id,
+          `Cup result from ESPN\n${fx.home_club_id} ${h}–${a} ${fx.away_club_id}${et}${pens}\n${compId} · ${fx.round || round}\n\n${money}`,
+        ).catch(() => undefined);
+      }
     } catch (e) {
-      summary.errors.push(`cups: ${(e as Error).message}`);
+      summary.errors.push(`cup ${compId}: ${(e as Error).message}`);
     }
   }
 
@@ -579,5 +669,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, cupsFound, scheduleSync: doScheduleSync, forced: forceSync });
+  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, cupsFound, cupResults, scheduleSync: doScheduleSync, forced: forceSync });
 }

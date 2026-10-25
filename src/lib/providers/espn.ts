@@ -41,6 +41,21 @@ export interface EspnMatch {
   away: number;
   /** Empty whenever the feed's goal list does not add up to its own score. */
   goals: Goal[];
+  /** Shootout kicks scored, when the tie went to penalties. */
+  shootout: { home: number; away: number } | null;
+  /** ESPN's own label for the tie ("Quarterfinals", "Round 3"), raw. */
+  note: string | null;
+}
+
+/** ESPN statuses that mean the match is over. */
+const DONE = new Set(['STATUS_FULL_TIME', 'STATUS_FINAL', 'STATUS_FINAL_AET', 'STATUS_FINAL_PEN', 'STATUS_FINAL_AFTER_EXTRA_TIME', 'STATUS_FINAL_AFTER_PENALTIES']);
+const WENT_TO_PENS = /PEN/;
+const WENT_TO_ET = /AET|EXTRA_TIME/;
+
+/** Minute a goal was scored, stoppage time folded back ("90'+5'" → 90). */
+export function minuteOf(g: { minute: string }): number {
+  const m = String(g.minute).match(/(\d+)/);
+  return m ? Number(m[1]) : 0;
 }
 
 interface RawDetail {
@@ -50,9 +65,14 @@ interface RawDetail {
   athletesInvolved?: { displayName?: string; shortName?: string }[];
 }
 interface RawEvent {
-  id?: string | number; date?: string;
+  id?: string | number; date?: string; name?: string; shortName?: string;
+  season?: { slug?: string };
   status?: { type?: { name?: string; completed?: boolean } };
-  competitions?: { competitors?: { homeAway?: string; score?: string | number; team?: { id?: string | number } }[]; details?: RawDetail[] }[];
+  competitions?: {
+    competitors?: { homeAway?: string; score?: string | number; team?: { id?: string | number } }[];
+    details?: RawDetail[];
+    notes?: { headline?: string; type?: string }[];
+  }[];
 }
 
 /** Pure. Scoreboard JSON in, owned-v-owned matches out. Malformed events are skipped, never thrown. */
@@ -86,6 +106,15 @@ export function parseScoreboard(json: unknown): EspnMatch[] {
           ...(d.ownGoal ? { og: true } : {}),
         });
       }
+      // Shootout kicks are counted separately and never enter the score.
+      let shootout: { home: number; away: number } | null = null;
+      for (const d of c?.details ?? []) {
+        if (!d.scoringPlay || !d.shootout) continue;
+        const clubId = CLUB_BY_ESPN.get(String(d.team?.id));
+        if (!clubId) continue;
+        shootout ??= { home: 0, away: 0 };
+        if (clubId === homeClubId) shootout.home++; else shootout.away++;
+      }
       const adds = Number.isFinite(home) && Number.isFinite(away)
         && goals.filter((g) => g.clubId === homeClubId).length === home
         && goals.filter((g) => g.clubId === awayClubId).length === away;
@@ -96,6 +125,8 @@ export function parseScoreboard(json: unknown): EspnMatch[] {
         completed: ev.status?.type?.completed === true,
         homeClubId, awayClubId, home, away,
         goals: adds ? goals : [],
+        shootout,
+        note: c?.notes?.find((n) => n.headline)?.headline ?? ev.season?.slug ?? null,
       });
     } catch { /* one malformed event never sinks the rest */ }
   }
@@ -114,22 +145,53 @@ export function findMatch(list: EspnMatch[], homeClubId: string, awayClubId: str
 }
 
 /**
- * A 90-minute result for the scoring engine. Only a plain full-time finish
- * qualifies: extra time and penalties need a 90-minute score ESPN does not
- * give, and knockout ties go to the Commissioner regardless.
+ * A result for the scoring engine.
+ *
+ * ESPN's final score is the score at the END of play, so for a tie that went
+ * to extra time that figure is the 120-minute score — exactly what the engine
+ * wants in `scoreAt120`. The 90-minute score is then derived from the goal
+ * minutes (stoppage time folded back, so 90'+5' still counts as 90'). That
+ * derivation only happens when the goal list adds up to the final score; with
+ * no usable goal list, this returns null and the fixture waits rather than
+ * guessing. Penalty shootout kicks are counted separately and never touch the
+ * margin.
+ *
+ * Every cup tie is a knockout, so nothing from here is ever auto-written: the
+ * poller routes knockout proposals to the Commissioner's Approve button.
  */
 export function toNormalised(m: EspnMatch, competitionCode: string, round: string): NormalisedResult | null {
-  if (!m.completed || m.status !== 'STATUS_FULL_TIME') return null;
+  if (!m.completed || !DONE.has(m.status)) return null;
   if (!Number.isInteger(m.home) || !Number.isInteger(m.away) || m.home < 0 || m.away < 0) return null;
-  return {
+
+  const pens = WENT_TO_PENS.test(m.status);
+  const extraTime = pens || WENT_TO_ET.test(m.status);
+  const base = {
     competitionCode, round,
     homeClubId: m.homeClubId, awayClubId: m.awayClubId,
-    scoreAt90: { home: m.home, away: m.away },
-    scoreAt120: null, shootout: null,
-    terminalStatus: 'FT',
     kickoffUtc: m.kickoffUtc,
     // deliberately no providerFixtureId: that column holds football-data ids
     provider: 'espn',
+  };
+
+  if (!extraTime) {
+    return { ...base, scoreAt90: { home: m.home, away: m.away }, scoreAt120: null, shootout: null, terminalStatus: 'FT' };
+  }
+
+  // Extra time: ESPN's score is at 120'. Recover 90' from the goal minutes.
+  if (!m.goals.length && (m.home > 0 || m.away > 0)) return null;
+  const at90 = {
+    home: m.goals.filter((g) => g.clubId === m.homeClubId && minuteOf(g) <= 90).length,
+    away: m.goals.filter((g) => g.clubId === m.awayClubId && minuteOf(g) <= 90).length,
+  };
+  if (at90.home > m.home || at90.away > m.away) return null; // inconsistent feed
+  if (pens && (!m.shootout || m.shootout.home === m.shootout.away)) return null;
+
+  return {
+    ...base,
+    scoreAt90: at90,
+    scoreAt120: { home: m.home, away: m.away },
+    shootout: pens ? m.shootout : null,
+    terminalStatus: pens ? 'PEN' : 'AET',
   };
 }
 
@@ -146,14 +208,18 @@ export function espnDateOf(iso: string): string {
   return etDate.format(new Date(iso)).replace(/-/g, '');
 }
 
-/** One league, one ESPN date. Never throws; a timeout or a bad response is []. */
-export async function espnScoreboard(compId: string, yyyymmdd: string, timeoutMs = 8000): Promise<EspnMatch[]> {
+/**
+ * One league, one ESPN date — or, with no date, whatever ESPN considers the
+ * current round, which is how a cup tie is found before anyone has a date for
+ * it. Never throws; a timeout or a bad response is [].
+ */
+export async function espnScoreboard(compId: string, yyyymmdd?: string, timeoutMs = 8000): Promise<EspnMatch[]> {
   const lg = ESPN_LEAGUE[compId];
   if (!lg) return [];
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const r = await fetch(`${BASE}/${lg}/scoreboard?dates=${yyyymmdd}`, { signal: ctl.signal, cache: 'no-store' });
+    const r = await fetch(`${BASE}/${lg}/scoreboard${yyyymmdd ? `?dates=${yyyymmdd}` : ''}`, { signal: ctl.signal, cache: 'no-store' });
     if (!r.ok) return [];
     return parseScoreboard(await r.json());
   } catch {
@@ -161,4 +227,36 @@ export async function espnScoreboard(compId: string, yyyymmdd: string, timeoutMs
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Cups ESPN is the ONLY source for: football-data's free tier carries none of them. */
+export const ESPN_ONLY_COMPS = ['facup', 'copadelrey', 'coppa', 'dfbpokal', 'communityshield', 'dflsupercup'] as const;
+
+/** Competition code the scoring engine expects, by our competition id. */
+export const ENGINE_CODE: Record<string, string> = {
+  facup: 'FA_CUP', copadelrey: 'COPA_DEL_REY', coppa: 'COPPA_ITALIA', dfbpokal: 'DFB_POKAL',
+  communityshield: 'COMMUNITY_SHIELD', dflsupercup: 'DFL_SUPERCUP',
+};
+
+/** ESPN's round name for a tie, humanised to match what the fixtures table stores. */
+export function espnRound(name: string | null | undefined): string {
+  const s = String(name ?? '').toLowerCase();
+  if (/final/.test(s) && !/semi|quarter/.test(s)) return 'Final';
+  if (/semi/.test(s)) return 'Semi-final';
+  if (/quarter/.test(s)) return 'Quarter-final';
+  if (/round of 16|last 16/.test(s)) return 'Round of 16';
+  const m = s.match(/round\s*(\d+)/);
+  if (m) return `Round ${m[1]}`;
+  return name ? String(name) : 'Cup tie';
+}
+
+/**
+ * Every date to check for a cup: today, the next `days` days (so a tie is
+ * found the moment it is drawn), and the recent past (so a result is not
+ * missed if nothing ran). Plus one undated call for the current round.
+ */
+export function cupDates(nowMs: number, days = 14, back = 3): string[] {
+  const out: string[] = [];
+  for (let d = -back; d <= days; d++) out.push(espnDateOf(new Date(nowMs + d * 864e5).toISOString()));
+  return [...new Set(out)];
 }
