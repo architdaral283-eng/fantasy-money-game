@@ -61,8 +61,14 @@ function bindingOk(t: RoastTemplate, ctx: RoastContext): boolean {
 }
 
 function severityOk(t: RoastTemplate, ctx: RoastContext): boolean {
-  if (t.severity < 3) return true;
-  return ctx.margin >= 3 || !!ctx.derbyId || ctx.isUpset;
+  // This used to hold severity 3 back unless the margin was 3+, it was a derby
+  // or it was an upset. Most results are one- or two-goal wins, so 45 of the
+  // library's hardest lines almost never fired and the group got the mild
+  // arithmetic ones instead — which is exactly the complaint. Gating now lives
+  // on the individual template (conditions.margin_min, is_derby, is_upset),
+  // where it can be aimed, instead of on a blanket severity rule.
+  void ctx;
+  return t.severity <= 3;
 }
 
 function cooledDown(t: RoastTemplate, nowMs: number, windowDays: number): boolean {
@@ -116,7 +122,8 @@ export function renderBody(body: string, ctx: RoastContext): string {
     loser_net: inr(ctx.loserNet), winner_net: inr(ctx.winnerNet),
     owed: `₹${ctx.owed.toLocaleString('en-IN')}`,
     streak: streakWord, marquee: ctx.marquee, manager: ctx.manager,
-    rank: String(ctx.rank),
+    // ordinal, not a digit: "third of four" reads, "3 of four" does not
+    rank: ordinal(ctx.rank),
     home_owner: ctx.homeOwner ?? ctx.loser, away_owner: ctx.awayOwner ?? ctx.winner,
     home_club: ctx.homeClub, away_club: ctx.awayClub,
   };

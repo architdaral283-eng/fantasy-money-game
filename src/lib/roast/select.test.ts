@@ -27,10 +27,18 @@ describe('roast selection', () => {
     expect(pick?.id).toBe(1);
   });
 
-  it('severity 3 gated without margin, derby or upset', () => {
+  it('the hardest lines now fire on an ordinary one-goal win', () => {
+    // Severity 3 used to need margin>=3, a derby or an upset, so a third of
+    // the library almost never played and the group got arithmetic instead.
     const brutal = T({ id: 3, severity: 3 });
-    expect(pickTemplate([brutal], { ...ctx, isUpset: false, margin: 1 }, Date.now(), () => 0.5)).toBeNull();
+    expect(pickTemplate([brutal], { ...ctx, isUpset: false, margin: 1, derbyId: null }, Date.now(), () => 0.5)?.id).toBe(3);
     expect(pickTemplate([brutal], ctx, Date.now(), () => 0.5)?.id).toBe(3);
+  });
+
+  it('a line that WANTS a thrashing still says so itself', () => {
+    const thrashing = T({ id: 5, severity: 3, conditions: { margin_min: 4 } });
+    expect(pickTemplate([thrashing], { ...ctx, margin: 1 }, Date.now(), () => 0.5)).toBeNull();
+    expect(pickTemplate([thrashing], { ...ctx, margin: 4 }, Date.now(), () => 0.5)?.id).toBe(5);
   });
 
   it('conditions filter: thrashing-only line needs margin 4', () => {
@@ -42,6 +50,10 @@ describe('roast selection', () => {
   it('cooldown relaxes 30d to 14d', () => {
     const used = T({ id: 5, last_used_at: new Date(Date.now() - 20 * 864e5).toISOString() });
     expect(pickTemplate([used], ctx, Date.now(), () => 0.5)?.id).toBe(5);
+  });
+
+  it('renders rank as a word, not a digit', () => {
+    expect(renderBody('{loser} is {rank} of four', ctx)).toBe('Vedant is third of four');
   });
 
   it('renders slots from computed truth', () => {

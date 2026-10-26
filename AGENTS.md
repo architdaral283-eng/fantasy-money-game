@@ -209,6 +209,32 @@ they are drawn (announcing each in the group) and proposes finished ones.
   remains for reference; `API_FOOTBALL_KEY` is dead config and can be removed
   from Vercel.
 
+## The roast library (0022 is the live one)
+
+0012 was brutal about clubs and silent about the men. 0019 was sharp about the
+men and the ledger and read like accountancy. **0022 fuses them**: every line
+humiliates the club on its real reputation, then turns on the owner who drafted
+it, then takes his money. 0019 is retired; un-retiring it is one UPDATE if the
+register is ever wanted back.
+
+- **Length is the point.** Long and medium, never one-liners — median ~270
+  characters. Short lines were written, shown and explicitly rejected. A roast
+  here is club → owner → direct second person → money → something final.
+- **It stays on football**: clubs, draft picks, records, and what they say in
+  the group. Nothing about anyone's life off the pitch. This fires
+  automatically with no human deciding whether today is a good day for it.
+- **The severity gate is gone.** `severityOk()` used to hold severity 3 back
+  unless margin >= 3, a derby, or an upset, so a third of the library almost
+  never played. Aiming now lives on the template
+  (`conditions.margin_min` / `is_derby` / `is_upset`), where it can be pointed
+  at the right fixture.
+- `{rank}` renders as a word (`third of four`), not a digit.
+- **`club_dossiers` goes stale.** It was seeded Jan 2026 and by Oct the
+  `{manager}` slot was naming six men who had left. Re-check every window.
+  Manchester United is deliberately NOT set: Amorim was sacked, Carrick was
+  interim, the 2026-27 holder is unconfirmed. No 0022 line uses `{manager}`
+  for United.
+
 ## Draws
 
 A draw has no loser. `condMatch()` gives draws only lines with
