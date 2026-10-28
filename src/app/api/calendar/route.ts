@@ -54,7 +54,7 @@ export async function GET(req: Request) {
       : `${pmap.get(oa) ?? oa} v ${pmap.get(ob) ?? ob}`;
 
     const comp = [kmap.get(f.competition_id) ?? f.competition_id, f.round || null].filter(Boolean).join(' · ');
-    const stake = sameOwner ? 'Nothing moves — same owner.' : '₹500 on it. ₹1,000 if it finishes 4+.';
+    const stake = sameOwner ? 'Nothing moves — same owner.' : '₹500 on it. ₹1,000 if it is won by four.';
     const played = f.status === 'RECORDED';
 
     events.push({

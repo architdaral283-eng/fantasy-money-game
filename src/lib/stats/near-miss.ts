@@ -43,10 +43,20 @@ function outcome(h: number, a: number): 'H' | 'A' | 'D' {
   return h > a ? 'H' : a > h ? 'A' : 'D';
 }
 
-/** House rule: ₹500 a result, ₹1,000 if the 90-minute score finished 4+. A draw moves nothing. */
+/**
+ * Constitution §5: ₹500 for a win by one to three, ₹1,000 for a win by four
+ * or more, ₹0 for a draw.
+ *
+ * It is the MARGIN, not the goal total. "₹1,000 if it finishes 4+" in the
+ * old stake line read as four goals between them, and that reading put the
+ * wrong number in this function until it was checked against
+ * marginToAmount() in the scoring engine, which is canonical. 3–1 is ₹500;
+ * 4–0 is ₹1,000.
+ */
 export function stakeFor(h: number, a: number): number {
-  if (outcome(h, a) === 'D') return 0;
-  return h + a >= 4 ? 1000 : 500;
+  const margin = Math.abs(h - a);
+  if (margin === 0) return 0;
+  return margin >= 4 ? 1000 : 500;
 }
 
 /**

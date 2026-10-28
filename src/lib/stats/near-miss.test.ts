@@ -14,11 +14,12 @@ describe('minute parsing', () => {
 });
 
 describe('the stake rule', () => {
-  it('is 500 normally, 1,000 at four goals, nothing for a draw', () => {
+  it('pays on the margin, not the goal total', () => {
     expect(stakeFor(2, 1)).toBe(500);
-    expect(stakeFor(3, 1)).toBe(1000);
+    expect(stakeFor(3, 1)).toBe(500);   // four goals, margin two
+    expect(stakeFor(4, 0)).toBe(1000);  // margin four
+    expect(stakeFor(1, 5)).toBe(1000);
     expect(stakeFor(2, 2)).toBe(0);
-    expect(stakeFor(4, 0)).toBe(1000);
   });
 });
 
@@ -42,12 +43,17 @@ describe('the goal that decided it', () => {
     expect(m.stakeAfter).toBe(0);
   });
 
-  it('flags a fourth goal that doubled the bill without changing the winner', () => {
-    const m = nearMiss({ ...base, h90: 3, a90: 1, goals: [g('5', 'A', 'arsenal'), g('15', 'B', 'arsenal'), g('60', 'C', 'real-madrid'), g("88'", 'D', 'arsenal')] })!;
+  it('flags the goal that took the margin to four and doubled the bill', () => {
+    const m = nearMiss({ ...base, h90: 4, a90: 0, goals: [g('5', 'A', 'arsenal'), g('15', 'B', 'arsenal'), g('60', 'C', 'arsenal'), g("88'", 'D', 'arsenal')] })!;
     expect(m.kind).toBe('bonus');
     expect(m.stakeBefore).toBe(500);
     expect(m.stakeAfter).toBe(1000);
     expect(m.gainedClubId).toBe('arsenal');
+  });
+
+  it('does not call a fourth goal a bonus when the margin stayed under four', () => {
+    // 3-1: four goals between them, margin two. ₹500 either way.
+    expect(nearMiss({ ...base, h90: 3, a90: 1, goals: [g('5', 'A', 'arsenal'), g('15', 'B', 'arsenal'), g('60', 'C', 'real-madrid'), g("88'", 'D', 'arsenal')] })).toBeNull();
   });
 
   it('says nothing when the late goal changed nothing', () => {

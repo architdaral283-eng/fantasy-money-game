@@ -36,7 +36,7 @@ describe('the last meeting', () => {
   const wld = [...wl('old', 'archit', 'vedant'), ...wl('new', 'vedant', 'archit')];
   const results = [
     { fixture_id: 'old', h90: 1, a90: 0 },
-    { fixture_id: 'new', h90: 1, a90: 3 },
+    { fixture_id: 'new', h90: 1, a90: 5 },
   ];
 
   it('picks the newest fixture between those two owners', () => {
@@ -46,7 +46,7 @@ describe('the last meeting', () => {
     expect(m.loser).toBe('archit');
   });
 
-  it('charges 1,000 when the 90-minute score finished 4 or more', () => {
+  it('charges 1,000 when it was won by four or more', () => {
     const m = lastMeeting('archit', 'vedant', fixtures, owner, wld, results)!;
     expect(m.stake).toBe(1000);
   });

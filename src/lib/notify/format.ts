@@ -86,7 +86,10 @@ export function cols(rows: [string, string][], gap = 3): string {
 }
 
 /** The one stake line every fixture message shares. */
-export const STAKE_LINE = '₹500 on it. ₹1,000 if it finishes 4+.';
+// "4+" alone reads as four goals between them. It is the margin — §5 of the
+// constitution, marginToAmount() in the engine — and the ambiguity has
+// already put a wrong number in one function.
+export const STAKE_LINE = '₹500 on it. ₹1,000 if it is won by four.';
 
 /** "Anmol +₹1,500 · Vedant −₹500" — where the two of them stand right now. */
 export function standingLine(a: string, netA: number, b: string, netB: number): string {

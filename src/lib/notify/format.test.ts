@@ -43,7 +43,7 @@ describe('fixture notice', () => {
     expect(t).toContain('Barcelona v Real Madrid');
     expect(t).toContain('La Liga · Sun 26 Oct');
     expect(t).toContain('Anmol v Vedant');
-    expect(t).toContain('₹500 on it. ₹1,000 if it finishes 4+.');
+    expect(t).toContain('₹500 on it. ₹1,000 if it is won by four.');
     expect(t).toContain('Head to head: Anmol leads 3–1');
     expect(t).toContain('Table: Anmol +₹1,500 · Vedant −₹500');
     // the old one-liner's tells, all gone

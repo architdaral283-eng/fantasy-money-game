@@ -103,7 +103,9 @@ export function lastMeeting(
     ?? (bRow ? (bRow.outcome === 'W' ? 'L' : bRow.outcome === 'L' ? 'W' : 'D') : null);
 
   const r = byFixture.get(f.id) ?? null;
-  const total = r ? r.h90 + r.a90 : null;
+  // Constitution §5 pays on the margin, not the goal total: 3-1 is ₹500,
+  // 4-0 is ₹1,000. Mirrors marginToAmount() in the scoring engine.
+  const margin = r ? Math.abs(r.h90 - r.a90) : null;
   const decided = seen === 'W' || seen === 'L';
 
   return {
@@ -115,7 +117,7 @@ export function lastMeeting(
     at: f.kickoff_utc,
     winner: seen === 'W' ? a : seen === 'L' ? b : null,
     loser: seen === 'W' ? b : seen === 'L' ? a : null,
-    stake: !decided ? 0 : total !== null && total >= 4 ? 1000 : 500,
+    stake: !decided ? 0 : margin !== null && margin >= 4 ? 1000 : 500,
   };
 }
 
