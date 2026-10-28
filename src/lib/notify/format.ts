@@ -334,8 +334,19 @@ export function buildSettle(pays: { from: string; to: string; amount: number }[]
 
 // ——————————————————————————— static ———————————————————————————
 
-export function buildHelp(commissioner: boolean): string {
-  const sections: [string, [string, string][]][] = [
+/**
+ * The command list, in one place.
+ *
+ * Telegram's "/" menu is server-side state on Telegram's machines, not
+ * something the code controls — which is why /roastadd, /roastkill and
+ * /roaststats were still being offered months after their handlers were
+ * deleted. Both /help and the menu registration read THIS, so the two can no
+ * longer drift apart: adding a command here puts it in both.
+ *
+ * Commissioner commands are deliberately excluded from the menu — it shows to
+ * all four players and three of them would only ever get "Commissioner only."
+ */
+export const COMMAND_SECTIONS: [string, [string, string][]][] = [
     ['Money', [
       ['/standings', 'table + photo'],
       ['/balance', 'one player, net'],
@@ -365,8 +376,28 @@ export function buildHelp(commissioner: boolean): string {
       ['/report', 'file a result'],
       ['/rules', 'the money rules'],
     ]],
-  ];
-  if (commissioner) sections.push(['Commissioner', [['/pending', 'approval queue'], ['/health', 'provider + cron'], ['/pin', 'refresh the panel'], ['/correct', 'fix a wrong result'], ['/quiet', 'force quiet on/off']]]);
+];
+
+export const COMMISSIONER_COMMANDS: [string, string][] = [
+  ['/pending', 'approval queue'],
+  ['/health', 'provider + cron'],
+  ['/pin', 'refresh the panel'],
+  ['/correct', 'fix a wrong result'],
+  ['/quiet', 'force quiet on/off'],
+  ['/setup', 're-register webhook + menu'],
+];
+
+/** Flat list for setMyCommands: no leading slash, players only. */
+export function playerCommands(): { command: string; description: string }[] {
+  const out = COMMAND_SECTIONS.flatMap(([, rows]) => rows)
+    .map(([c, d]) => ({ command: c.replace(/^\//, ''), description: d }));
+  out.push({ command: 'help', description: 'all commands' });
+  return out;
+}
+
+export function buildHelp(commissioner: boolean): string {
+  const sections: [string, [string, string][]][] = [...COMMAND_SECTIONS];
+  if (commissioner) sections.push(['Commissioner', COMMISSIONER_COMMANDS]);
   const body = sections.map(([t, rows]) => `${t}\n${cols(rows).split('\n').map((l) => ` ${l}`).join('\n')}`).join('\n\n');
   return block(head('Commands'), pre(esc(body)));
 }

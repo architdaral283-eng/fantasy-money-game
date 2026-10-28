@@ -821,10 +821,19 @@ async function statsReply(
     ));
     return;
   }
+  if (cmd === '/setup') {
+    if (callerRole !== 'COMMISSIONER') { await reply('Commissioner only.'); return; }
+    // Runs on the server because that is the only place the bot token lives:
+    // .env here has TELEGRAM_BOT_TOKEN blank on purpose.
+    const { registerWithTelegram, setupReportText } = await import('@/lib/notify/telegram-admin');
+    await reply(block(head('Telegram setup'), setupReportText(await registerWithTelegram(APP_URL))));
+    return;
+  }
+
   if (cmd === '/predictions') {
     const { predictionTable } = await import('@/lib/notify/predict');
     await reply(await predictionTable(db));
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   if (cmd === '/settle') {
