@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseNews, selectDigest, isFirstTeamFootball, newsPriority, clubOfHeadline, NEWS_LEAGUES, type NewsItem } from '@/lib/news/espn-news';
+import { parseNews, selectDigest, isFirstTeamFootball, newsPriority, clubOfHeadline, isMajorElsewhere, prominence, NEWS_LEAGUES, type NewsItem } from '@/lib/news/espn-news';
 import { buildDigestText } from '@/lib/notify/format';
 
 const NOW = Date.parse('2026-10-28T18:00:00Z');
@@ -89,7 +89,8 @@ describe('parsing ESPN news', () => {
 
   it('an event outranks interest, and interest outranks nothing', () => {
     const mk2 = (id: string, club: string, headline: string, mins: number): NewsItem =>
-      ({ id, headline, description: '', clubIds: [club], published: new Date(NOW - mins * 60000).toISOString() });
+      ({ id, headline, description: '', clubIds: [club], published: new Date(NOW - mins * 60000).toISOString(),
+         prominent: false, mentions: 1, sources: 1 });
     const got = selectDigest([
       mk2('i', 'inter', 'Inter linked with a striker', 5),       // newest, but only interest
       mk2('e', 'bayern', 'Bayern sign Wirtz', 300),              // older, but done
@@ -104,7 +105,8 @@ describe('parsing ESPN news', () => {
 
 describe('whose story is it', () => {
   const it0 = (headline: string, clubIds: string[]): NewsItem =>
-    ({ id: 'x', headline, description: '', clubIds, published: '2026-10-28T12:00:00Z' });
+    ({ id: 'x', headline, description: '', clubIds, published: '2026-10-28T12:00:00Z',
+       prominent: false, mentions: 1, sources: 1 });
 
   it('uses the club NAMED in the headline, not the first one ESPN tagged', () => {
     // the real one: ESPN tagged seven clubs, Manchester United first, for a
@@ -127,8 +129,9 @@ describe('whose story is it', () => {
 });
 
 describe('choosing tonight\'s brief', () => {
-  const mk = (id: string, clubIds: string[], headline: string, mins = 0, description = ''): NewsItem =>
-    ({ id, headline, description, clubIds, published: new Date(NOW - mins * 60000).toISOString() });
+  const mk = (id: string, clubIds: string[], headline: string, mins = 0, description = '', extra: Partial<NewsItem> = {}): NewsItem =>
+    ({ id, headline, description, clubIds, published: new Date(NOW - mins * 60000).toISOString(),
+       prominent: false, mentions: 1, sources: 1, ...extra });
 
   it('never repeats a headline sent on a previous night', () => {
     const items = [mk('a', ['arsenal'], 'Arsenal out of the cup'), mk('b', ['bayern'], 'Kane injured', 10)];
@@ -153,27 +156,53 @@ describe('choosing tonight\'s brief', () => {
     expect(got.ours.map((o) => o.headline)).toEqual(['Arsenal one', 'Napoli one']);
   });
 
-  it('caps the list and reports every id shown', () => {
+  it('caps the list at four and reports every id shown', () => {
     const items = ['arsenal', 'bayern', 'napoli', 'roma', 'inter', 'juventus', 'barcelona']
       .map((c, i) => mk('c' + i, [c], 'club ' + i, i));
-    const got = selectDigest(items, { maxOurs: 6 });
-    expect(got.ours).toHaveLength(6);
-    expect(got.ids).toHaveLength(6);
+    const got = selectDigest(items, { maxOurs: 4 });
+    expect(got.ours).toHaveLength(4);
+    expect(got.ids).toHaveLength(4);
   });
 
-  it('general football needs ESPN\'s summary or it does not run', () => {
+  it('ELSEWHERE is one item, major football only, with its summary', () => {
+    const long = 'A sentence long enough to count as real context for the reader.';
     const got = selectDigest([
-      mk('bare', [], 'How a tiny Basque club spawned the top managers'),
-      mk('ctx', [], 'Kane wins the Ballon d\'Or', 5, 'After a remarkable year for Bayern and England, Harry Kane is named the world\'s best player.'),
-      mk('c', ['roma'], 'Dybala out for a month', 6),
+      mk('bare', [], 'Pulisic signs new Milan contract'),                       // no summary
+      mk('small', [], 'Espanyol sack their coach', 5, long),                    // nobody knows them
+      mk('major', [], 'Pulisic set to sign new AC Milan contract', 6, long),    // recognisable
+      mk('major2', [], 'Liverpool agree deal for a defender', 7, long),         // also fine
+      mk('c', ['roma'], 'Dybala ruled out for a month', 8),
     ]);
-    expect(got.ours.map((o) => o.headline)).toEqual(['Dybala out for a month']);
-    expect(got.general.map((g) => g.id)).toEqual(['ctx']);   // the bare one is dropped
+    expect(got.ours.map((o) => o.headline)).toEqual(['Dybala ruled out for a month']);
+    expect(got.general.map((g) => g.id)).toEqual(['major']);   // one slot, best of the majors
   });
 
-  it('newest first', () => {
-    const got = selectDigest([mk('old', ['inter'], 'older', 90), mk('new', ['roma'], 'newer', 1)]);
-    expect(got.ours[0].headline).toBe('newer');
+  it('knows which clubs the group would recognise', () => {
+    expect(isMajorElsewhere('Pulisic set to sign new AC Milan contract')).toBe(true);
+    expect(isMajorElsewhere('Liverpool agree deal for a defender')).toBe(true);
+    expect(isMajorElsewhere('France squad named for the World Cup')).toBe(true);
+    expect(isMajorElsewhere('Espanyol sack González after loss to 4th-tier side')).toBe(false);
+    expect(isMajorElsewhere('Elche appoint a new sporting director')).toBe(false);
+  });
+
+  it('the biggest story of the day leads, not the newest', () => {
+    // the same story in four league feeds is the one everyone is talking about
+    const big = [0, 1, 2, 3].map((i) => mk('big' + i, ['bayern'], 'Kane wins the Ballon d\'Or', 600, '', { prominent: true, mentions: 5 }));
+    const fresh = mk('small', ['roma'], 'Roma sign a full back', 1);
+    const got = selectDigest([fresh, ...big]);
+    expect(got.ours[0].headline).toBe("Kane wins the Ballon d'Or");
+    expect(got.ours[0].sources).toBe(4);
+  });
+
+  it('counts syndication rather than discarding it', () => {
+    const three = [0, 1, 2].map((i) => mk('s' + i, ['inter'], 'Inter sack their coach', i));
+    expect(selectDigest(three).ours[0].sources).toBe(3);
+  });
+
+  it('scores syndication above a lone front-page story', () => {
+    const syndicated = { ...mk('a', ['inter'], 'A', 0), sources: 3 };
+    const lone = { ...mk('b', ['roma'], 'B', 0), prominent: true, mentions: 6 };
+    expect(prominence(syndicated)).toBeGreaterThan(prominence(lone));
   });
 });
 

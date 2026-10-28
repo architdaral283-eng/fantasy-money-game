@@ -224,6 +224,19 @@ Fills the week-long gaps between counted fixtures.
 - **The next fixture is NOT in here.** The 24-hour reminder and the 30-minute
   warning already carry it; repeating it nightly teaches people to skim. Cut
   after Archit read the first draft — do not add it back.
+- **Biggest story first, not newest** (`prominence`). The club slots are the
+  day's top stories mapped onto the sixteen, not whichever were most recent.
+  ESPN publishes no popularity figure, so this uses three proxies, strongest
+  first: **syndication** (a story carried by several league feeds is one the
+  editors think everyone cares about — Kane's Ballon d'Or ran in two, a
+  touchline ban in one; the de-duplication used to throw that count away),
+  `HeadlineNews` over `Story`, and how many clubs and players are tagged.
+  Recency only breaks ties: at 23:00 everything in the window is today.
+- **Four club items, one ELSEWHERE.** `isMajorElsewhere` keeps the general
+  slot to clubs and competitions the group would recognise — Espanyol sacking
+  their coach is real news and means nothing in a Delhi living room. Note
+  `sporting (cp|lisbon)`, because a bare "sporting" matched "sporting director"
+  at every club on earth.
 - **Events, not vocabulary** (`newsPriority`). The first ranking matched on
   words like "transfer" and "manager" and the live result was filler: ESPN's
   daily rumour column, a feature on where Basque coaches come from, a player
