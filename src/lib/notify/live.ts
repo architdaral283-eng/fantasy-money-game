@@ -54,10 +54,12 @@ export async function refreshLive(db: SupabaseClient): Promise<number> {
   // One scoreboard per competition per date, however many fixtures need it.
   const cache = new Map<string, ReturnType<typeof espnScoreboard>>();
   const board = (compId: string, iso: string) => {
-    const league = ESPN_LEAGUE[compId];
-    if (!league) return null;
-    const key = `${league}:${espnDateOf(iso)}`;
-    if (!cache.has(key)) cache.set(key, espnScoreboard(league, espnDateOf(iso)));
+    // espnScoreboard takes OUR competition id and maps it itself. Handing it
+    // the ESPN slug makes the lookup miss and it quietly returns [] — no
+    // error, no scores, no clue why.
+    if (!ESPN_LEAGUE[compId]) return null;
+    const key = `${compId}:${espnDateOf(iso)}`;
+    if (!cache.has(key)) cache.set(key, espnScoreboard(compId, espnDateOf(iso)));
     return cache.get(key)!;
   };
 
