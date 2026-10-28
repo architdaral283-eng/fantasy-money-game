@@ -70,12 +70,13 @@ export async function POST(req: Request) {
     headline: it.headline,
   }));
 
-  const text = buildDigestText(istDay(new Date(nowMs).toISOString()), ours);
+  const general = picked.general.map((g) => ({ headline: g.headline, context: g.description }));
+  const text = buildDigestText(istDay(new Date(nowMs).toISOString()), ours, general);
   await sendGroup(db, text, { urgent: true });
 
   // Remember what went out, newest first, capped.
   const nextSeen = [...picked.ids, ...seenIds].slice(0, SEEN_CAP);
   await db.from('config').upsert({ key: SEEN_KEY, value: { ids: nextSeen } }, { onConflict: 'key' });
 
-  return NextResponse.json({ ok: true, scanned: items.length, ours: ours.length, errors });
+  return NextResponse.json({ ok: true, scanned: items.length, ours: ours.length, general: general.length, errors });
 }

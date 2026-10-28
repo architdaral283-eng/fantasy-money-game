@@ -199,29 +199,36 @@ export function buildFixtureList(rows: ListFixture[], title = 'Next up'): string
 // ——————————————————————————— nightly brief ———————————————————————————
 
 export interface DigestClubItem { club: string; owner: string; headline: string }
+export interface DigestGeneralItem { headline: string; context: string }
 
 /**
  * The 23:00 IST brief, for the days between fixtures when the group goes quiet.
  *
- * Club, owner, headline. Nothing else.
+ * Club, owner, headline — the owner's name is what makes a headline worth
+ * reacting to. Then a little general football, each item carrying ESPN's own
+ * one-line summary: the first draft printed bare headlines about clubs nobody
+ * owns and they read as non sequiturs.
  *
- * Three things were in here and came out after Archit read one: section
- * headings (noise), general football headlines (a bare headline about nobody
- * you own reads as a non sequitur — there is no club and no name to anchor
- * it), and the next fixture (the 24-hour reminder and the 30-minute warning
- * already cover it, and repeating it nightly just trains people to skim).
+ * The next fixture is deliberately NOT here. The 24-hour reminder and the
+ * 30-minute warning already carry it, and repeating it nightly only teaches
+ * people to skim.
  */
-export function buildDigestText(dateLabel: string, ours: DigestClubItem[]): string {
-  if (!ours.length) {
-    return block(
-      head('Tonight', dateLabel),
-      'Nothing happened to any of your sixteen today. Sixteen clubs, four leagues, not one of them worth a headline.',
-    );
+export function buildDigestText(
+  dateLabel: string,
+  ours: DigestClubItem[],
+  general: DigestGeneralItem[] = [],
+): string {
+  const header = head('Daily news brief', `Tonight · ${dateLabel}`);
+  if (!ours.length && !general.length) {
+    return block(header, 'Nothing happened to any of your sixteen today. Sixteen clubs, four leagues, not one of them worth a headline.');
   }
-  const body = ours
-    .map((it) => `${esc(it.club)} · ${esc(it.owner)}\n   ${esc(it.headline)}`)
-    .join('\n\n');
-  return block(head('Tonight', dateLabel), pre(body));
+  const clubBlock = ours.length
+    ? pre(ours.map((it) => `${esc(it.club)} · ${esc(it.owner)}\n   ${esc(it.headline)}`).join('\n\n'))
+    : null;
+  const generalBlock = general.length
+    ? block('ELSEWHERE', pre(general.map((g) => `${esc(g.headline)}\n   ${esc(g.context)}`).join('\n\n')))
+    : null;
+  return block(header, clubBlock, generalBlock);
 }
 
 // ——————————————————————————— ledger ———————————————————————————

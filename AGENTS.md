@@ -214,13 +214,23 @@ they are drawn (announcing each in the group) and proposes finished ones.
 `/api/cron/digest`, pg_cron job `nightly-digest` at 17:30 UTC (migration 0023).
 Fills the week-long gaps between counted fixtures.
 
-- **Club, owner, headline. Nothing else.** Straight headlines, nothing
-  generated and nothing editorialised — Archit chose this over an AI-written
-  version. Three things were in the first draft and were cut after he read one:
-  section headings (noise), general football headlines (a bare headline about a
-  club nobody owns has no name to anchor it and reads as a non sequitur), and
-  the next fixture (the 24-hour reminder and 30-minute warning already cover
-  it; repeating it nightly just teaches people to skim). Do not add them back.
+- **Club · owner, then the headline.** Straight headlines, nothing generated
+  and nothing editorialised — Archit chose this over an AI-written version. The
+  owner's name is what makes a headline worth reacting to.
+- **ELSEWHERE carries ESPN's `description`.** General football is included, but
+  only with that one-line summary attached: the first draft printed bare
+  headlines about clubs nobody owns and they read as non sequiturs. No summary,
+  no slot.
+- **The next fixture is NOT in here.** The 24-hour reminder and the 30-minute
+  warning already carry it; repeating it nightly teaches people to skim. Cut
+  after Archit read the first draft — do not add it back.
+- **First-team football only** (`isFirstTeamFootball`): no under-18s, youth,
+  academy, reserves, women's team, and no tabloid stories about players rather
+  than football. ESPN tags a youth story to the SENIOR club id, so team-id
+  filtering alone is not enough — "Rooney's son scores for Man United
+  under-18s" arrived tagged Manchester United. Note the `s?` after the age
+  digits in the pattern: "under-18s" ends in a word character, so a closing
+  `\b` straight after the digits never matches.
 - Source is ESPN's news feed, one call per league (`NEWS_LEAGUES`). Articles
   are matched to our clubs **by ESPN team id** out of `TEAM_ID_MAP.espn`, never
   by club name — "United", "Inter" and "Madrid" are why that rule exists.

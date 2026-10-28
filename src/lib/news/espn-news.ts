@@ -24,14 +24,31 @@ const USEFUL_TYPES = new Set(['Story', 'HeadlineNews']);
 export interface NewsItem {
   id: string;
   headline: string;
+  /** ESPN's own one-sentence summary. This is what gives a general headline context. */
+  description: string;
   published: string;
   /** Our club ids mentioned, in the order ESPN listed them. Empty = general football. */
   clubIds: string[];
 }
 
+// Not first-team football. ESPN tags a youth or women's story to the SENIOR
+// club id, so filtering by team id alone lets them through — "Wayne Rooney's
+// son scores 4 goals for Man United under-18s" arrived tagged Manchester
+// United. Archit's rule: transfers, managers, injuries, first-team news only.
+// NOTE the trailing s? on the age groups: "under-18s" ends in a word
+// character, so a closing \b right after the digits never matches.
+const NOT_FIRST_TEAM = /\b(under[- ]?\d{2}s?|u-?1[5-9]s?|u-?2[0-3]s?|youth|academy|reserves?|primavera|women'?s?|wsl|f[ée]minines?|b team|development squad)\b/i;
+// Tabloid stories about footballers rather than football.
+const OFF_PITCH = /\b(burgl\w*|break-?in|divorce|wedding|girlfriend|nightclub)\b/i;
+
+/** Transfers, managers, injuries, first-team matters. Not the under-18s. */
+export function isFirstTeamFootball(headline: string): boolean {
+  return !NOT_FIRST_TEAM.test(headline) && !OFF_PITCH.test(headline);
+}
+
 interface RawCategory { type?: string; teamId?: number | string; team?: { id?: number | string } }
 interface RawArticle {
-  id?: number | string; headline?: string; published?: string; type?: string;
+  id?: number | string; headline?: string; description?: string; published?: string; type?: string;
   categories?: RawCategory[];
 }
 
@@ -48,13 +65,14 @@ export function parseNews(json: unknown, nowMs: number, windowHours = 36): NewsI
       const published = String(a.published ?? '');
       const at = Date.parse(published);
       if (!headline || !Number.isFinite(at) || at < cutoff) continue;
+      if (!isFirstTeamFootball(headline)) continue;
       const clubIds: string[] = [];
       for (const c of a.categories ?? []) {
         if (c.type !== 'team') continue;
         const club = CLUB_BY_ESPN.get(String(c.teamId ?? c.team?.id));
         if (club && !clubIds.includes(club)) clubIds.push(club);
       }
-      out.push({ id: String(a.id ?? headline), headline, published, clubIds });
+      out.push({ id: String(a.id ?? headline), headline, description: String(a.description ?? '').trim(), published, clubIds });
     } catch { /* one bad article never sinks the feed */ }
   }
   return out;
@@ -62,6 +80,9 @@ export function parseNews(json: unknown, nowMs: number, windowHours = 36): NewsI
 
 export interface DigestSelection {
   ours: NewsItem[];
+  /** Football that touches none of the sixteen. Carries ESPN's summary so it
+   *  is not a bare headline about strangers. */
+  general: NewsItem[];
   /** Every id shown tonight, to be remembered so nothing repeats tomorrow. */
   ids: string[];
 }
@@ -69,8 +90,9 @@ export interface DigestSelection {
 /**
  * Pick what goes in tonight's brief.
  *
- * - only articles tied to a club one of the four owns. A headline about
- *   nobody's club has no name to hang it on and reads as a non sequitur.
+ * - club items first: anything tied to one of the sixteen
+ * - then a little general football, but ONLY with ESPN's summary attached, so
+ *   it arrives with context instead of as a headline about strangers
  * - de-duplicated by article id AND by headline, because the same story is
  *   syndicated into several league feeds
  * - nothing already sent on a previous night
@@ -80,9 +102,9 @@ export interface DigestSelection {
  */
 export function selectDigest(
   items: NewsItem[],
-  opts: { seenIds?: Iterable<string>; maxOurs?: number } = {},
+  opts: { seenIds?: Iterable<string>; maxOurs?: number; maxGeneral?: number } = {},
 ): DigestSelection {
-  const { maxOurs = 6 } = opts;
+  const { maxOurs = 6, maxGeneral = 2 } = opts;
   const seen = new Set(opts.seenIds ?? []);
   const byId = new Map<string, NewsItem>();
   const headlines = new Set<string>();
@@ -102,5 +124,10 @@ export function selectDigest(
     usedClubs.add(club);
     ours.push({ ...it, clubIds: [club, ...it.clubIds.filter((c) => c !== club)] });
   }
-  return { ours, ids: ours.map((i) => i.id) };
+  // General football only earns a slot if ESPN gave it a summary — without one
+  // it is a headline about strangers and reads as a non sequitur.
+  const general = [...byId.values()]
+    .filter((it) => !it.clubIds.length && it.description.length > 20)
+    .slice(0, maxGeneral);
+  return { ours, general, ids: [...ours, ...general].map((i) => i.id) };
 }

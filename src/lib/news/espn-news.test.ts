@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseNews, selectDigest, NEWS_LEAGUES, type NewsItem } from '@/lib/news/espn-news';
+import { parseNews, selectDigest, isFirstTeamFootball, NEWS_LEAGUES, type NewsItem } from '@/lib/news/espn-news';
 import { buildDigestText } from '@/lib/notify/format';
 
 const NOW = Date.parse('2026-10-28T18:00:00Z');
@@ -44,14 +44,35 @@ describe('parsing ESPN news', () => {
     expect(parseNews({ articles: [{}, { type: 'Story' }] }, NOW)).toEqual([]);
   });
 
+  it('drops the under-18s, the women\'s team and the tabloid stuff', () => {
+    // ESPN tags a youth story to the SENIOR club id, so team-id filtering
+    // alone let "Rooney's son scores for the under-18s" through.
+    expect(isFirstTeamFootball("Wayne Rooney's son Kai scores 4 goals for Man United under-18s")).toBe(false);
+    expect(isFirstTeamFootball('Arsenal Women win the WSL')).toBe(false);
+    expect(isFirstTeamFootball('Barcelona academy graduate signs pro deal')).toBe(false);
+    expect(isFirstTeamFootball("Bruno Fernandes' home burgled during Man United loss")).toBe(false);
+    // the things Archit actually wants
+    expect(isFirstTeamFootball('Kompany stable, could be away for weeks after collapse')).toBe(true);
+    expect(isFirstTeamFootball('Liverpool tracking Dortmund midfielder Nmecha')).toBe(true);
+    expect(isFirstTeamFootball('Arsenal crash out of the League Cup to Fleetwood')).toBe(true);
+  });
+
+  it('filters the feed, not just the selection', () => {
+    const got = parseNews({ articles: [
+      art({ id: 1, headline: 'Man United under-18s win 4-0', categories: [team(360)] }),
+      art({ id: 2, headline: 'Mbappé out for three weeks', categories: [team(86)] }),
+    ] }, NOW);
+    expect(got.map((g) => g.id)).toEqual(['2']);
+  });
+
   it('asks every league the clubs actually play in', () => {
     expect([...NEWS_LEAGUES]).toEqual(['eng.1', 'esp.1', 'ger.1', 'ita.1', 'uefa.champions']);
   });
 });
 
 describe('choosing tonight\'s brief', () => {
-  const mk = (id: string, clubIds: string[], headline: string, mins = 0): NewsItem =>
-    ({ id, headline, clubIds, published: new Date(NOW - mins * 60000).toISOString() });
+  const mk = (id: string, clubIds: string[], headline: string, mins = 0, description = ''): NewsItem =>
+    ({ id, headline, description, clubIds, published: new Date(NOW - mins * 60000).toISOString() });
 
   it('never repeats a headline sent on a previous night', () => {
     const items = [mk('a', ['arsenal'], 'Arsenal out of the cup'), mk('b', ['bayern'], 'Kane injured', 10)];
@@ -84,13 +105,14 @@ describe('choosing tonight\'s brief', () => {
     expect(got.ids).toHaveLength(6);
   });
 
-  it('drops anything not tied to a club one of them owns', () => {
-    // A bare headline about nobody's club has no name to hang it on.
+  it('general football needs ESPN\'s summary or it does not run', () => {
     const got = selectDigest([
-      mk('g', [], 'How a tiny Basque club spawned the top managers'),
-      mk('c', ['roma'], 'Dybala out for a month', 5),
+      mk('bare', [], 'How a tiny Basque club spawned the top managers'),
+      mk('ctx', [], 'Kane wins the Ballon d\'Or', 5, 'After a remarkable year for Bayern and England, Harry Kane is named the world\'s best player.'),
+      mk('c', ['roma'], 'Dybala out for a month', 6),
     ]);
     expect(got.ours.map((o) => o.headline)).toEqual(['Dybala out for a month']);
+    expect(got.general.map((g) => g.id)).toEqual(['ctx']);   // the bare one is dropped
   });
 
   it('newest first', () => {
@@ -100,23 +122,29 @@ describe('choosing tonight\'s brief', () => {
 });
 
 describe('the brief itself', () => {
-  it('is club, owner, headline and nothing else', () => {
+  it('is headed, then club, owner, headline', () => {
     const t = buildDigestText('Wed 28 Oct', [
       { club: 'Arsenal', owner: 'Archit', headline: 'Fleetwood Town knock Arsenal out of the League Cup' },
-      { club: 'Borussia Dortmund', owner: 'Anmol', headline: 'Liverpool target Nmecha' },
+      { club: 'Bayern Munich', owner: 'Harshal', headline: 'Kompany could be away for weeks after collapse' },
     ]);
-    expect(t.startsWith('TONIGHT · Wed 28 Oct')).toBe(true);
+    expect(t.startsWith('DAILY NEWS BRIEF · Tonight · Wed 28 Oct')).toBe(true);
     expect(t).toContain('Arsenal · Archit');
-    expect(t).toContain('Borussia Dortmund · Anmol');
-    // the three things that were cut after the first draft
+    expect(t).toContain('Bayern Munich · Harshal');
     expect(t).not.toContain('YOUR SIXTEEN');
-    expect(t).not.toContain('ELSEWHERE');
     expect(t).not.toContain('Next:');
-    expect(t).not.toContain('in play');
+  });
+
+  it('general football carries its context line', () => {
+    const t = buildDigestText('Wed 28 Oct', [], [
+      { headline: "Kane's long road to Ballon d'Or glory", context: 'After a remarkable year for Bayern Munich and England, Harry Kane is the world’s best player.' },
+    ]);
+    expect(t).toContain('ELSEWHERE');
+    expect(t).toContain("Kane's long road");
+    expect(t).toContain('world’s best player');
   });
 
   it('says so plainly on a dead news day', () => {
-    expect(buildDigestText('Wed 28 Oct', [])).toContain('Nothing happened to any of your sixteen today');
+    expect(buildDigestText('Wed 28 Oct', [], [])).toContain('Nothing happened to any of your sixteen today');
   });
 
   it('escapes a headline that would otherwise break HTML parse mode', () => {
