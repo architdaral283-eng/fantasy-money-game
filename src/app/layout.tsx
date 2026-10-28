@@ -14,6 +14,7 @@ const NAV: [string, string][] = [
   ["/h2h", "Head-to-Head"],
   ["/trophies", "Trophies"],
   ["/awards", "Awards"],
+  ["/what-if", "What If"],
   ["/constitution", "Constitution"],
 ];
 
