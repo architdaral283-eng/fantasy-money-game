@@ -12,7 +12,8 @@ import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { sendGroup } from '@/lib/notify/quiet';
 import { buildDigestText, buildSilenceLine, type DigestClubItem } from '@/lib/notify/format';
-import { silentPlayers } from '@/lib/stats/silence';
+import { silentPlayers, silenceObservable } from '@/lib/stats/silence';
+import { CHATTER_KEY } from '@/lib/notify/quiet';
 import { PLAYERS } from '@/lib/stats/weekly';
 import { istDay } from '@/lib/notify/fixture-notice';
 import { NEWS_LEAGUES, parseNews, selectDigest, type NewsItem } from '@/lib/news/espn-news';
@@ -77,13 +78,20 @@ export async function POST(req: Request) {
   // Whoever has stopped talking gets named here rather than in a message of
   // their own. markInbound() already stamps config on every inbound message,
   // so this is a read of something we already had, not new tracking.
-  const { data: inbound } = await db.from('config').select('key,value').like('key', 'last_inbound_%');
+  // Silent only if the bot has actually been WATCHING for long enough to say
+  // so. Until three days after the first ordinary group message it ever saw,
+  // there is no line at all — and in privacy mode there never will be.
+  const [{ data: inbound }, { data: chatter }] = await Promise.all([
+    db.from('config').select('key,value').like('key', 'last_inbound_%'),
+    db.from('config').select('value').eq('key', CHATTER_KEY).maybeSingle(),
+  ]);
   const lastInbound: Record<string, string | null> = {};
   for (const r of (inbound ?? []) as { key: string; value: { at?: string } | null }[]) {
     lastInbound[r.key.replace('last_inbound_', '')] = r.value?.at ?? null;
   }
-  const silence = buildSilenceLine(
-    silentPlayers(lastInbound, PLAYERS, nowMs).map((s) => ({
+  const observedSince = silenceObservable((chatter?.value as { first_at?: string } | null)?.first_at, nowMs);
+  const silence = observedSince === null ? null : buildSilenceLine(
+    silentPlayers(lastInbound, PLAYERS, nowMs, 3, observedSince).map((s) => ({
       name: pmap.get(s.player) ?? s.player,
       days: s.days,
       net: Number(bals.find((b) => b.id === s.player)?.net_inr ?? 0),
@@ -93,6 +101,19 @@ export async function POST(req: Request) {
   const text = [buildDigestText(istDay(new Date(nowMs).toISOString()), ours, general), silence]
     .filter((x): x is string => typeof x === 'string' && x !== '')
     .join('\n\n');
+
+  // ?dry=1 builds the real message from real data and returns it, sending
+  // nothing and remembering nothing. It is how a scheduled message gets
+  // checked in production before the first time it goes to the group.
+  if (new URL(req.url).searchParams.get('dry') === '1') {
+    return NextResponse.json({
+      ok: true, dry: true, text,
+      scanned: items.length, ours: ours.length, general: general.length,
+      silence: { watchingSince: (chatter?.value as { first_at?: string } | null)?.first_at ?? null, line: silence },
+      errors,
+    });
+  }
+
   await sendGroup(db, text, { urgent: true });
 
   // Remember what went out, newest first, capped.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { silentPlayers } from '@/lib/stats/silence';
+import { silentPlayers, silenceObservable } from '@/lib/stats/silence';
 import { buildSilenceLine } from '@/lib/notify/format';
 
 const NOW = Date.parse('2026-10-28T18:00:00Z');
@@ -66,5 +66,42 @@ describe('the silence line', () => {
   it('has a line for never having spoken at all', () => {
     const t = buildSilenceLine([{ name: 'Anmol', days: null, net: 0 }])!;
     expect(t).toContain('not said one word');
+  });
+});
+
+describe('only claiming what was actually watched', () => {
+  // The bug: last_inbound only moved on commands, so Anmol (last command
+  // 24 Oct) and Harshal (25 Oct) would have been named as silent on 28 Oct
+  // however much they had said in the group.
+  const watchingSince = Date.parse('2026-10-28T15:00:00Z');
+
+  it('stays off until three full days of watching', () => {
+    expect(silenceObservable('2026-10-28T15:00:00Z', Date.parse('2026-10-28T17:30:00Z'))).toBeNull();
+    expect(silenceObservable('2026-10-28T15:00:00Z', Date.parse('2026-10-31T14:59:00Z'))).toBeNull();
+    expect(silenceObservable('2026-10-28T15:00:00Z', Date.parse('2026-10-31T15:00:00Z'))).toBe(watchingSince);
+  });
+
+  it('stays off for good when nothing has ever been watched — which is privacy mode', () => {
+    expect(silenceObservable(null, NOW)).toBeNull();
+    expect(silenceObservable(undefined, NOW)).toBeNull();
+    expect(silenceObservable('garbage', NOW)).toBeNull();
+  });
+
+  it('never reports more days than it has been watching', () => {
+    const now = Date.parse('2026-11-02T15:00:00Z');                // 5 days in
+    const out = silentPlayers({ anmol: '2026-10-10T10:00:00Z' }, ['anmol'], now, 3, watchingSince);
+    expect(out[0].days).toBe(5);                                     // not 23
+  });
+
+  it('cannot claim "never said a word" once it is only vouching for its own window', () => {
+    const now = Date.parse('2026-11-02T15:00:00Z');
+    const out = silentPlayers({}, ['harshal'], now, 3, watchingSince);
+    expect(out[0].days).toBe(5);
+  });
+
+  it('uses the real last message when it falls inside the window', () => {
+    const now = Date.parse('2026-11-04T15:00:00Z');
+    const out = silentPlayers({ vedant: '2026-10-30T15:00:00Z' }, ['vedant'], now, 3, watchingSince);
+    expect(out[0].days).toBe(5);
   });
 });

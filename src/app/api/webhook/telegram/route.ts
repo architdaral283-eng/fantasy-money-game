@@ -4,7 +4,7 @@ import { approveProposal } from '@/lib/ledger/writer';
 import {
   fanOutPhoto, groupId, sendHtml, editText, pinMessage, answerCallback, notifyArchitApproval, zeroSumAlert, clearLedgerLock,
 } from '@/lib/notify/send';
-import { markInbound, sendGroup } from '@/lib/notify/quiet';
+import { markInbound, markChatter, sendGroup } from '@/lib/notify/quiet';
 import { parseCommand, parseOneLine } from '@/lib/parse/one-line';
 import { submitManualLine } from '@/lib/entry/submit';
 import { buildPinText, countdown } from '@/lib/notify/panel';
@@ -290,6 +290,11 @@ export async function POST(req: Request) {
   // a question the bot itself just asked (5-minute window). Everything else
   // passes without a sound. Fixture updates surface as the pin edit alone.
   if (isGroup && !text.startsWith('/')) {
+    // Ordinary chatter from one of the four. Recorded so "who has gone quiet"
+    // measures what people say in the group, not when they last used a command.
+    const speaker = await playerByTg(db, update.message?.from?.id);
+    if (speaker) await markChatter(db, speaker.id).catch(() => {});
+
     const { data: pend } = await db.from('config').select('value').eq('key', `pending_prompt:${chatId}`).single();
     const pr = (pend?.value as { kind?: string; at?: string } | null);
     if (pr?.kind === 'taunt-player' && pr.at && Date.now() - Date.parse(pr.at) < 5 * 60 * 1000) {

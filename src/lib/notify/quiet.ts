@@ -58,6 +58,30 @@ export async function markInbound(db: SupabaseClient, playerId: string): Promise
   await db.from('config').upsert({ key: `last_inbound_${playerId}`, value: { at: new Date().toISOString() } }, { onConflict: 'key' });
 }
 
+/** Set once, the first time the bot sees an ordinary group message. */
+export const CHATTER_KEY = 'group_chatter_seen';
+
+/**
+ * An ordinary group message from one of the four.
+ *
+ * markInbound() used to fire only for commands, DMs and button taps, because
+ * ordinary group messages returned early. "Who has gone quiet" was therefore
+ * measuring when somebody last typed a slash command, and would have named
+ * people as silent while they were talking.
+ *
+ * The first one ever recorded also proves the bot can see chatter at all: a
+ * bot in privacy mode that is not a group admin never receives ordinary
+ * messages, and in that case the marker is never set and the silence line
+ * never runs.
+ */
+export async function markChatter(db: SupabaseClient, playerId: string): Promise<void> {
+  await markInbound(db, playerId);
+  await db.from('config').upsert(
+    { key: CHATTER_KEY, value: { first_at: new Date().toISOString() } },
+    { onConflict: 'key', ignoreDuplicates: true },
+  );
+}
+
 async function groupSentToday(db: SupabaseClient): Promise<number> {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const { count } = await db.from('notifications').select('id', { count: 'exact', head: true })
