@@ -27,19 +27,42 @@ export function inr(n: number): string {
   return `${n < 0 ? '−' : '+'}₹${Math.abs(n).toLocaleString('en-IN')}`;
 }
 
-/** Signature pinned message: table + zero-sum + next fixture. */
-export function buildPinText(rows: StandingRow[], played: number, totalPaying: number, next: NextFixture | null, updatedIST: string): string {
+export interface LivePanelEntry { home: string; away: string; h: number; a: number; clock: string }
+
+/**
+ * Signature pinned message: live match, table, zero-sum, next fixture.
+ *
+ * The live block goes FIRST and only when there is one. A pinned message
+ * nobody scrolls is a pinned message that has to lead with the thing that
+ * changed.
+ */
+export function buildPinText(
+  rows: StandingRow[],
+  played: number,
+  totalPaying: number,
+  next: NextFixture | null,
+  updatedIST: string,
+  live: LivePanelEntry[] = [],
+): string {
   const table = rows
     .map((r, i) => `${i + 1}  ${r.name.padEnd(9)} ${inr(r.net).padStart(9)}   ${r.w}W ${r.l}L ${r.d}D`)
     .join('\n');
   const sum = rows.reduce((s, r) => s + r.net, 0);
-  const lines = [
+  const lines: string[] = [];
+  if (live.length) {
+    lines.push(`● LIVE`);
+    for (const m of live) {
+      lines.push(`${m.home} ${m.h}–${m.a} ${m.away}${m.clock ? `  ${m.clock}` : ''}`);
+    }
+    lines.push(``);
+  }
+  lines.push(
     `LEAGUE TABLE              after ${played} of ${totalPaying}`,
     ``,
     `<pre>${table}</pre>`,
     ``,
     sum === 0 ? `◎ balances sum to ₹0` : `Balances do not sum to ₹0. Ledger locked.`,
-  ];
+  );
   if (next) {
     const when = next.inText ? `${next.whenIST} IST · ${next.inText}` : `${next.whenIST} IST`;
     lines.push(``, `Next: ${next.home} v ${next.away}, ${when}`, `${next.ownerA} v ${next.ownerB}. ${STAKE_LINE}`);

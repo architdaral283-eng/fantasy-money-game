@@ -557,9 +557,20 @@ export async function POST(req: Request) {
     }
   }
 
+  // Live scores for the pin. No fixture in the last three hours means no
+  // network call at all, so this is free on a quiet day.
+  let liveNow = 0;
+  try {
+    const { refreshLive } = await import('@/lib/notify/live');
+    liveNow = await refreshLive(db);
+  } catch (e) {
+    summary.errors.push(`live refresh failed: ${(e as Error).message}`);
+  }
+
   // The pinned panel is the only group surface that costs nothing to update,
-  // so refresh it every tick: the countdown to the next fixture stays honest
-  // and the table is current on a day with no messages at all.
+  // so refresh it every tick: the countdown to the next fixture stays honest,
+  // a match in progress shows its score, and the table is current on a day
+  // with no messages at all.
   try {
     const { refreshPin } = await import('@/app/api/webhook/telegram/route');
     await refreshPin(db);
@@ -567,5 +578,5 @@ export async function POST(req: Request) {
     summary.errors.push(`pin refresh failed: ${(e as Error).message}`);
   }
 
-  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, cupsFound, cupResults, scheduleSync: doScheduleSync, forced: forceSync });
+  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, liveNow, cupsFound, cupResults, scheduleSync: doScheduleSync, forced: forceSync });
 }

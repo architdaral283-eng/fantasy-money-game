@@ -73,7 +73,12 @@ async function pinState(db: ReturnType<typeof supabaseService>) {
     whenIST: ist(upcoming.kickoff_utc),
     inText: countdown(Date.parse(upcoming.kickoff_utc) - Date.now()),
   } : null;
-  return buildPinText(rows, played ?? 0, 63, next, istTime());
+  // Live scores if a money match is being played right now. readLive drops
+  // anything older than twelve minutes rather than showing a stale score as
+  // current.
+  const { readLive } = await import('@/lib/notify/live');
+  const live = await readLive(db).catch(() => []);
+  return buildPinText(rows, played ?? 0, 63, next, istTime(), live);
 }
 
 /** Edit the pinned panel; recreate + re-pin if gone. */

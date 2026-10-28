@@ -45,12 +45,34 @@ export interface EspnMatch {
   shootout: { home: number; away: number } | null;
   /** ESPN's own label for the tie ("Quarterfinals", "Round 3"), raw. */
   note: string | null;
+  /** Match clock as ESPN prints it: "67'", "90'+4'", "HT". Null when not playing. */
+  clock: string | null;
+  /** 1 first half, 2 second half, higher for extra time. */
+  period: number | null;
 }
 
 /** ESPN statuses that mean the match is over. */
 const DONE = new Set(['STATUS_FULL_TIME', 'STATUS_FINAL', 'STATUS_FINAL_AET', 'STATUS_FINAL_PEN', 'STATUS_FINAL_AFTER_EXTRA_TIME', 'STATUS_FINAL_AFTER_PENALTIES']);
 const WENT_TO_PENS = /PEN/;
 const WENT_TO_ET = /AET|EXTRA_TIME/;
+
+/**
+ * Statuses that mean the ball is in play, or about to be again.
+ *
+ * ESPN names halves separately and adds its own for breaks, so a single
+ * "in progress" check is not enough. Anything not completed and not one of
+ * these is treated as not live — better to show nothing than a stale score
+ * presented as current.
+ */
+const LIVE = new Set([
+  'STATUS_IN_PROGRESS', 'STATUS_FIRST_HALF', 'STATUS_SECOND_HALF', 'STATUS_HALFTIME',
+  'STATUS_END_PERIOD', 'STATUS_EXTRA_TIME', 'STATUS_FIRST_EXTRA_TIME',
+  'STATUS_SECOND_EXTRA_TIME', 'STATUS_SHOOTOUT',
+]);
+
+export function isLive(m: { status: string; completed: boolean }): boolean {
+  return !m.completed && LIVE.has(m.status);
+}
 
 /** Minute a goal was scored, stoppage time folded back ("90'+5'" → 90). */
 export function minuteOf(g: { minute: string }): number {
@@ -67,7 +89,7 @@ interface RawDetail {
 interface RawEvent {
   id?: string | number; date?: string; name?: string; shortName?: string;
   season?: { slug?: string };
-  status?: { type?: { name?: string; completed?: boolean } };
+  status?: { type?: { name?: string; completed?: boolean }; displayClock?: string; period?: number };
   competitions?: {
     competitors?: { homeAway?: string; score?: string | number; team?: { id?: string | number } }[];
     details?: RawDetail[];
@@ -127,6 +149,8 @@ export function parseScoreboard(json: unknown): EspnMatch[] {
         goals: adds ? goals : [],
         shootout,
         note: c?.notes?.find((n) => n.headline)?.headline ?? ev.season?.slug ?? null,
+        clock: ev.status?.displayClock ? String(ev.status.displayClock) : null,
+        period: Number.isFinite(Number(ev.status?.period)) ? Number(ev.status?.period) : null,
       });
     } catch { /* one malformed event never sinks the rest */ }
   }
