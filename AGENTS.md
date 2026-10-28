@@ -224,6 +224,26 @@ Fills the week-long gaps between counted fixtures.
 - **The next fixture is NOT in here.** The 24-hour reminder and the 30-minute
   warning already carry it; repeating it nightly teaches people to skim. Cut
   after Archit read the first draft — do not add it back.
+- **Events, not vocabulary** (`newsPriority`). The first ranking matched on
+  words like "transfer" and "manager" and the live result was filler: ESPN's
+  daily rumour column, a feature on where Basque coaches come from, a player
+  being gracious about an award he lost. Archit: *"very generic"*. Tier 0 is
+  something that HAPPENED (sacked, collapsed, signed, knocked out, banned),
+  tier 1 is concrete interest in a named player, tier 2 is filler and never
+  reaches the brief. Three good items beat six forgettable ones.
+  - Order matters: recurring column → feature → **talk** → event. "Yamal
+    excited despite Ballon d'Or miss" contains an event word and is still just
+    talk; checking events first put it top of the live brief.
+  - `knock(s|ed|ing)?` not `knocked out` — "knock Arsenal out" puts the object
+    in the middle of the phrase.
+- **`clubOfHeadline` decides whose story it is.** ESPN tags an article with
+  every club it mentions: the Fleetwood cup upset carried seven, Manchester
+  United first, and taking `clubIds[0]` printed "Manchester United · Vedant"
+  over a headline about Arsenal. The club must be NAMED IN THE HEADLINE
+  (earliest name wins); the sole exception is an article tagged to exactly one
+  of ours, where a player-only headline is unambiguous. Several tagged and
+  none named → the item is dropped. Putting the wrong man's name on a headline
+  is worse than printing nothing.
 - **First-team football only** (`isFirstTeamFootball`): no under-18s, youth,
   academy, reserves, women's team, and no tabloid stories about players rather
   than football. ESPN tags a youth story to the SENIOR club id, so team-id

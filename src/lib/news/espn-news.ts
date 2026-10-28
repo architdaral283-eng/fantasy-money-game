@@ -46,14 +46,83 @@ export function isFirstTeamFootball(headline: string): boolean {
   return !NOT_FIRST_TEAM.test(headline) && !OFF_PITCH.test(headline);
 }
 
+// ———————————————————————————————————————————————————————————————————————
+// What earns a slot.
+//
+// The first version of this ranked on keywords — "transfer", "manager" — and
+// the live result was filler: ESPN's daily rumour column, a feature about
+// where Basque coaches come from, a player being gracious about an award he
+// lost. Archit's verdict: generic.
+//
+// The ones that worked were things that HAPPENED, with a name attached:
+// Kompany collapsing in training, Fleetwood Town knocking Arsenal out of the
+// League Cup. So this ranks events, not vocabulary, and throws out the three
+// shapes of filler that a daily feed is mostly made of.
+// ———————————————————————————————————————————————————————————————————————
+
+/** ESPN's recurring columns. Same headline every day, different names in it. */
+const RECURRING_COLUMN = /^(transfer rumou?rs?|transfer talk|rumou?r roundup|live updates?|ask |the briefing|what we learned)\b/i;
+
+/** Somebody talking about football, rather than football happening. */
+const JUST_TALK = /\b(says?|said|insists?|admits?|reveals?|claims?|excited|delighted|hits out|backs?|praises?|defends?|slams?|urges?|warns?|hopes?|confident|open to|interview)\b/i;
+
+/** Analysis and listicles. "Why X lost", "How a tiny club…", "ranked", "best XI". */
+const FEATURE = /^(why|how|what|who|where|inside|meet|the rise|the fall)\b|\b(ranked|rated|power rankings|best xi|predictions?|preview|talking points|winners and losers|explained|analysis|a look at)\b/i;
+
+/** Something actually happened to a club. These get the slots. */
+const EVENT = new RegExp([
+  // the dugout
+  'sack(ed|s|ing)?', 'fired', 'appoint\\w*', 'resign\\w*', 'steps? down', 'leaves?', 'departs?', 'takes? charge', 'interim',
+  // bodies
+  'collaps\\w*', 'hospital\\w*', 'injur\\w*', 'surgery', 'operation', 'ruled out', 'out for', 'away for',
+  'sidelined', 'will miss', 'out of action', 'stretchered', 'tear', 'fracture', 'rupture',
+  // business done
+  'sign(s|ed|ing)?\\b', 'agree(s|d)?\\b', 'complete(s|d)?\\b', 'seal(s|ed)?\\b', 'medical', 'joins?\\b',
+  'new contract', 'contract until', 'extends?', 'released', 'sold', 'bought', 'takeover', 'new owners?',
+  // competition
+  // "knock Arsenal out" puts the object in the middle, so a literal
+  // "knocked out" misses the exact headline this filter exists for.
+  'knock(s|ed|ing)?\\b', 'out of the \\w+ cup', 'eliminated', 'crash(es|ed)? out', 'dumped out', 'upset',
+  'through to', 'reach(es|ed)? the',
+  'win(s)? the', 'won the', 'champions', 'ballon d.or', 'player of the year',
+  // discipline
+  'ban(ned|s)?\\b', 'suspend\\w*', 'charg(ed|es)\\b', 'fined', 'red card', 'sent off', 'investigat\\w*', 'points deduction',
+].join('|'), 'i');
+
+/**
+ * 0 = something happened, 1 = concrete interest in a named player, 2 = filler.
+ * Tier 2 never reaches the brief: three good items beat six forgettable ones.
+ */
+export function newsPriority(headline: string): 0 | 1 | 2 {
+  if (RECURRING_COLUMN.test(headline)) return 2;
+  if (FEATURE.test(headline)) return 2;
+  // Talk is checked BEFORE events on purpose. "Yamal excited despite Ballon
+  // d'Or miss" contains an event word and is still just a man being gracious
+  // about an award he lost; that ordering bug put it top of the live brief.
+  if (JUST_TALK.test(headline)) return 2;
+  if (EVENT.test(headline)) return 0;
+  if (/\b(target(ing|s)?|track(ing|s)?|linked|bid for|want(s|ed)?|move for|interest in)\b/i.test(headline)) return 1;
+  return 2;
+}
+
+/** Everything the brief will consider. Filler is dropped outright. */
+export function worthPrinting(headline: string): boolean {
+  return isFirstTeamFootball(headline) && newsPriority(headline) < 2;
+}
+
 interface RawCategory { type?: string; teamId?: number | string; team?: { id?: number | string } }
 interface RawArticle {
   id?: number | string; headline?: string; description?: string; published?: string; type?: string;
   categories?: RawCategory[];
 }
 
-/** One league's feed. Malformed articles are skipped, never thrown. */
-export function parseNews(json: unknown, nowMs: number, windowHours = 36): NewsItem[] {
+/**
+ * One league's feed. Malformed articles are skipped, never thrown.
+ *
+ * The window is 24 hours, not 36: this runs at 23:00, and a match report from
+ * the day before is not news by then.
+ */
+export function parseNews(json: unknown, nowMs: number, windowHours = 24): NewsItem[] {
   const arts = (json as { articles?: unknown } | null)?.articles;
   if (!Array.isArray(arts)) return [];
   const cutoff = nowMs - windowHours * 3600 * 1000;
@@ -65,7 +134,7 @@ export function parseNews(json: unknown, nowMs: number, windowHours = 36): NewsI
       const published = String(a.published ?? '');
       const at = Date.parse(published);
       if (!headline || !Number.isFinite(at) || at < cutoff) continue;
-      if (!isFirstTeamFootball(headline)) continue;
+      if (!worthPrinting(headline)) continue;
       const clubIds: string[] = [];
       for (const c of a.categories ?? []) {
         if (c.type !== 'team') continue;
@@ -76,6 +145,47 @@ export function parseNews(json: unknown, nowMs: number, windowHours = 36): NewsI
     } catch { /* one bad article never sinks the feed */ }
   }
   return out;
+}
+
+// Whose story is it?
+//
+// ESPN tags an article with every club it mentions — the Fleetwood Town cup
+// upset carried seven, Manchester United among them because the piece listed
+// other famous giant-killings. Taking the first owned club in ESPN's order
+// printed "Manchester United · Vedant" above a headline about Arsenal, which
+// is worse than printing nothing: it puts the wrong man's name on it.
+//
+// So the club must be NAMED IN THE HEADLINE. The only exception is an article
+// tagged to exactly one of ours, where there is nothing to confuse it with
+// ("Mbappé ruled out for three weeks" never says Real Madrid).
+const CLUB_IN_HEADLINE: Record<string, RegExp> = {
+  arsenal: /\barsenal\b/i,
+  'man-city': /\bman(chester)? city\b/i,
+  'man-utd': /\bman(chester)? (united|utd)\b/i,
+  'aston-villa': /\b(aston )?villa\b/i,
+  'real-madrid': /\breal madrid\b/i,
+  barcelona: /\b(barcelona|bar[çc]a)\b/i,
+  atletico: /\batl[ée]tico\b/i,
+  'real-betis': /\bbetis\b/i,
+  bayern: /\bbayern\b/i,
+  leverkusen: /\bleverkusen\b/i,
+  dortmund: /\bdortmund\b/i,
+  'rb-leipzig': /\bleipzig\b/i,
+  inter: /\b(inter|internazionale)\b/i,
+  napoli: /\bnapoli\b/i,
+  roma: /\broma\b/i,
+  juventus: /\b(juventus|juve)\b/i,
+};
+
+/** The club this headline is actually about, or null if it cannot be told. */
+export function clubOfHeadline(item: NewsItem): string | null {
+  const named = item.clubIds
+    .map((c) => ({ c, at: item.headline.search(CLUB_IN_HEADLINE[c] ?? /$^/) }))
+    .filter((x) => x.at >= 0)
+    .sort((a, b) => a.at - b.at);                 // whoever the headline names FIRST
+  if (named.length) return named[0].c;
+  if (item.clubIds.length === 1) return item.clubIds[0];  // unambiguous tag, player-only headline
+  return null;                                    // several tagged, none named: do not guess
 }
 
 export interface DigestSelection {
@@ -104,11 +214,16 @@ export function selectDigest(
   items: NewsItem[],
   opts: { seenIds?: Iterable<string>; maxOurs?: number; maxGeneral?: number } = {},
 ): DigestSelection {
-  const { maxOurs = 6, maxGeneral = 2 } = opts;
+  const { maxOurs = 5, maxGeneral = 2 } = opts;
   const seen = new Set(opts.seenIds ?? []);
   const byId = new Map<string, NewsItem>();
   const headlines = new Set<string>();
-  for (const it of [...items].sort((a, b) => Date.parse(b.published) - Date.parse(a.published))) {
+  // Real news first, then newest. Six slots should not go to yesterday's
+  // scorelines while a sacking and two transfers sit underneath them.
+  const ranked = [...items].sort((a, b) =>
+    (newsPriority(a.headline) - newsPriority(b.headline))
+    || (Date.parse(b.published) - Date.parse(a.published)));
+  for (const it of ranked) {
     const key = it.headline.toLowerCase().replace(/\s+/g, ' ').trim();
     if (seen.has(it.id) || byId.has(it.id) || headlines.has(key)) continue;
     byId.set(it.id, it);
@@ -119,8 +234,8 @@ export function selectDigest(
   for (const it of byId.values()) {
     if (ours.length >= maxOurs) break;
     if (!it.clubIds.length) continue;
-    const club = it.clubIds.find((c) => !usedClubs.has(c));
-    if (!club) continue;
+    const club = clubOfHeadline(it);
+    if (!club || usedClubs.has(club)) continue;
     usedClubs.add(club);
     ours.push({ ...it, clubIds: [club, ...it.clubIds.filter((c) => c !== club)] });
   }
