@@ -47,7 +47,7 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoWritten: 0, autoLogged: 0, reminders: 0, espnFallback: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
+  const summary = { synced: 0, proposed: 0, autoWritten: 0, autoLogged: 0, reminders: 0, scouted: 0, nearMisses: 0, espnFallback: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
 
   // Per-run reads that cannot change mid-run, memoised on first use so an idle
   // tick (no finished fixture, no reminder due) issues no extra query. A read
@@ -395,6 +395,11 @@ export async function POST(req: Request) {
             // was a silent `catch {}`, which hid a broken standings image for weeks
             summary.errors.push(`standings photo failed for ${fixture.id}: ${(e as Error).message}`);
           }
+          // If a goal from the 80th minute on changed the outcome, or pushed
+          // the total to four and doubled the bill, the two owners hear about
+          // it privately. Null for most matches, which is the point.
+          const { nearMissDms } = await import('@/lib/notify/near-miss-dm');
+          summary.nearMisses += await nearMissDms(db, fixture.id).catch(() => 0);
           const { TelegramAdapter: TA } = await import('@/lib/notify/channels');
           const tat = process.env.TELEGRAM_BOT_TOKEN ? new TA(process.env.TELEGRAM_BOT_TOKEN) : null;
           const architChat = await architChatId();
@@ -492,8 +497,14 @@ export async function POST(req: Request) {
   for (const id of dueReminders((sched ?? []) as { id: string; status: string; kickoff_utc: string | null; reminder_sent_at: string | null }[], nowMs)) {
     const f = (sched ?? []).find((x: { id: string }) => x.id === id) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string; round?: string | null };
     await db.from('fixtures').update({ reminder_sent_at: new Date().toISOString() }).eq('id', id);
-    await sendGroup(db, await fixtureNotice(db, { ...f, id }, isTodayIST(f.kickoff_utc) ? 'today' : 'tomorrow'));
+    const todayFixture = isTodayIST(f.kickoff_utc);
+    await sendGroup(db, await fixtureNotice(db, { ...f, id }, todayFixture ? 'today' : 'tomorrow'));
     summary.reminders++;
+    // The two with money on it also get a private brief: opponent form, the
+    // record, the grudge, and what a win or a loss does to their position.
+    // DMs have no ceiling, so this costs the group nothing.
+    const { scoutDms } = await import('@/lib/notify/scout-dm');
+    summary.scouted += await scoutDms(db, { ...f, id }, todayFixture).catch(() => 0);
   }
 
   // release anything queued through quiet hours or the daily ceiling
@@ -521,6 +532,16 @@ export async function POST(req: Request) {
       await sendGroup(db, await fixtureNotice(db, f, 'prematch', mins), { urgent: true });
       prematch++;
     }
+  }
+
+  // The pinned panel is the only group surface that costs nothing to update,
+  // so refresh it every tick: the countdown to the next fixture stays honest
+  // and the table is current on a day with no messages at all.
+  try {
+    const { refreshPin } = await import('@/app/api/webhook/telegram/route');
+    await refreshPin(db);
+  } catch (e) {
+    summary.errors.push(`pin refresh failed: ${(e as Error).message}`);
   }
 
   return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, cupsFound, cupResults, scheduleSync: doScheduleSync, forced: forceSync });

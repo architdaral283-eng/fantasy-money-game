@@ -7,7 +7,7 @@ import {
 import { markInbound, sendGroup } from '@/lib/notify/quiet';
 import { parseCommand, parseOneLine } from '@/lib/parse/one-line';
 import { submitManualLine } from '@/lib/entry/submit';
-import { buildPinText } from '@/lib/notify/panel';
+import { buildPinText, countdown } from '@/lib/notify/panel';
 import { commissionerHeaders, telegramWebhookAuthed } from '@/lib/auth/require-commissioner';
 import { buildHelp, buildRules, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, block, head, signed, money, pre, cols, esc, scorerLines } from '@/lib/notify/format';
 import { istClock, istDay } from '@/lib/notify/fixture-notice';
@@ -71,6 +71,7 @@ async function pinState(db: ReturnType<typeof supabaseService>) {
     ownerA: cmap.get(upcoming.home_club_id)?.owner_id ?? '?',
     ownerB: cmap.get(upcoming.away_club_id)?.owner_id ?? '?',
     whenIST: ist(upcoming.kickoff_utc),
+    inText: countdown(Date.parse(upcoming.kickoff_utc) - Date.now()),
   } : null;
   return buildPinText(rows, played ?? 0, 63, next, istTime());
 }
@@ -215,6 +216,12 @@ export async function POST(req: Request) {
           const { sendGroupPhoto } = await import('@/lib/notify/quiet');
           await sendGroupPhoto(db, `Standings. ${fixture}.`, async () => png);
         } catch { /* photo best-effort; ledger already written */ }
+        // Same near-miss DM the poller sends, so a hand-approved result is not
+        // a quieter result.
+        if ((approval as { subject_type?: string; subject_id?: string } | null)?.subject_type === 'FIXTURE') {
+          const { nearMissDms } = await import('@/lib/notify/near-miss-dm');
+          await nearMissDms(db, (approval as { subject_id: string }).subject_id).catch(() => 0);
+        }
         if (await clearLedgerLock(db)) await refreshPin(db);
       } catch (e) {
         const msg = (e as Error).message;

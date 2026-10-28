@@ -135,5 +135,7 @@ export function lastMeetingText(
   const label = samePair ? 'Rematch' : 'Last meeting';
   const head = dateIST ? `${label}: ${tie}, ${dateIST}.` : `${label}: ${tie}.`;
   if (!m.winner || !m.loser || m.stake === 0) return `${head} Nothing moved.`;
-  return `${head} ${playerName(m.winner)} took ${money(m.stake)} off ${playerName(m.loser)}.`;
+  // The winner's name opens a sentence, and a DM passes 'you' here.
+  const who = playerName(m.winner);
+  return `${head} ${who.charAt(0).toUpperCase()}${who.slice(1)} took ${money(m.stake)} off ${playerName(m.loser)}.`;
 }

@@ -381,3 +381,115 @@ export function buildRules(): string {
     'Knockouts: whoever advances wins the tie. Two legs count as one aggregate.\nTrophies: the winner collects from each of the other three.',
   );
 }
+
+// ---------------------------------------------------------------------------
+// DMs. These two go to one person, so they can say "you" and spend as many
+// messages as they like — the ceiling is a group-chat rule.
+
+export function ordinal(n: number): string {
+  // 11th, 12th, 13th are the exceptions; past them the last digit decides.
+  // Minutes run past 90, so 91st and 92nd are reachable.
+  const teens = n % 100;
+  if (teens >= 11 && teens <= 13) return `${n}th`;
+  const d = n % 10;
+  return `${n}${d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th'}`;
+}
+
+export interface ScoutLine {
+  rank: number;
+  net: number;
+  aheadOf: string | null;
+  gapAhead: number | null;
+  behind: string | null;
+  gapBehind: number | null;
+}
+
+/** '2nd, ₹500 behind Archit' — or the lead, when you are top. */
+function posText(l: ScoutLine): string {
+  if (l.rank === 1 && l.aheadOf && l.gapAhead !== null) {
+    return l.gapAhead === 0
+      ? `${ordinal(l.rank)}, level with ${esc(l.aheadOf)}`
+      : `${ordinal(l.rank)}, ${money(l.gapAhead)} clear of ${esc(l.aheadOf)}`;
+  }
+  if (l.behind && l.gapBehind !== null) {
+    return l.gapBehind === 0
+      ? `${ordinal(l.rank)}, level with ${esc(l.behind)}`
+      : `${ordinal(l.rank)}, ${money(l.gapBehind)} behind ${esc(l.behind)}`;
+  }
+  return ordinal(l.rank);
+}
+
+export interface ScoutBrief {
+  whenLabel: string;          // 'Tomorrow, 01:30 IST'
+  home: string;
+  away: string;
+  compId: string;
+  compName?: string | null;
+  yourClub: string;
+  opponent: string;           // the other owner's name
+  theirClub: string;
+  oppForm: string;            // 'WWLDW' or '—'
+  oppPoints: number;
+  h2h: string;
+  lastMeeting?: string | null;
+  now: ScoutLine;
+  win: ScoutLine;
+  lose: ScoutLine;
+}
+
+/** Day-before DM to the two people with money on it. */
+export function buildScoutBrief(s: ScoutBrief): string {
+  const where = [compName(s.compId, s.compName), s.whenLabel].filter(Boolean).join(' · ');
+  const form = s.oppForm === '—'
+    ? `${esc(s.opponent)} has not played yet.`
+    : `${esc(s.opponent)}'s last five: ${esc(s.oppForm)}, ${s.oppPoints} point${s.oppPoints === 1 ? '' : 's'}`;
+
+  return block(
+    head('Scouting', s.whenLabel),
+    `${esc(s.home)} v ${esc(s.away)}\n${esc(where)}`,
+    `Your ${esc(s.yourClub)} against ${esc(s.opponent)}'s ${esc(s.theirClub)}.`,
+    [form, `Head to head: ${esc(s.h2h)}`, s.lastMeeting ? esc(s.lastMeeting) : null]
+      .filter(Boolean).join('\n'),
+    [
+      `You are ${posText(s.now)} on ${signed(s.now.net)}.`,
+      `Win and you are ${posText(s.win)}.`,
+      `Lose and you are ${posText(s.lose)}.`,
+    ].join('\n'),
+    STAKE_LINE,
+  );
+}
+
+export interface NearMissNote {
+  home: string;
+  away: string;
+  h90: number;
+  a90: number;
+  minute: number;
+  scorer: string;
+  before: { h: number; a: number };
+  kind: 'flip' | 'bonus';
+  /** What it did to your balance: negative means it cost you. */
+  delta: number;
+  opponent: string;
+}
+
+/** The goal that decided it, to whichever of the two it happened to. */
+export function buildNearMiss(n: NearMissNote): string {
+  const cost = n.delta < 0;
+  const amount = money(Math.abs(n.delta));
+  const was = `${n.before.h}–${n.before.a}`;
+  const body = n.kind === 'flip'
+    ? (n.before.h === n.before.a
+        ? `Until the ${ordinal(n.minute)} minute it was ${was} and nothing was moving.`
+        : `Until the ${ordinal(n.minute)} minute it was ${was}.`)
+    : `Until the ${ordinal(n.minute)} minute it was ${was}. The fourth goal doubled it.`;
+  const verdict = cost
+    ? `That goal cost you ${amount} to ${esc(n.opponent)}.`
+    : `That goal took ${amount} off ${esc(n.opponent)}.`;
+
+  return block(
+    head('Near miss', `${n.minute}'`),
+    `${esc(n.home)} ${n.h90}–${n.a90} ${esc(n.away)}\n${esc(n.scorer)} ${n.minute}'`,
+    `${body} ${verdict}`,
+  );
+}

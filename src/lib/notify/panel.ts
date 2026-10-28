@@ -6,7 +6,22 @@
 import { block, head, pre, esc, money, padR, compShort, STAKE_LINE } from '@/lib/notify/format';
 
 export interface StandingRow { name: string; net: number; w: number; l: number; d: number }
-export interface NextFixture { home: string; away: string; ownerA: string; ownerB: string; whenIST: string }
+export interface NextFixture { home: string; away: string; ownerA: string; ownerB: string; whenIST: string; inText?: string | null }
+
+/**
+ * 'in 2d 14h'. The pin is the one surface that costs nothing to update, so it
+ * can carry a countdown that is right to the minute. Null once kickoff passes.
+ */
+export function countdown(msUntil: number): string | null {
+  if (!Number.isFinite(msUntil) || msUntil <= 0) return null;
+  const mins = Math.round(msUntil / 60000);
+  if (mins <= 1) return 'any moment';
+  if (mins < 60) return `in ${mins} min`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  if (h < 24) return m ? `in ${h}h ${m}m` : `in ${h}h`;
+  const d = Math.floor(h / 24), rh = h % 24;
+  return rh ? `in ${d}d ${rh}h` : `in ${d}d`;
+}
 
 export function inr(n: number): string {
   return `${n < 0 ? '−' : '+'}₹${Math.abs(n).toLocaleString('en-IN')}`;
@@ -26,7 +41,8 @@ export function buildPinText(rows: StandingRow[], played: number, totalPaying: n
     sum === 0 ? `◎ balances sum to ₹0` : `Balances do not sum to ₹0. Ledger locked.`,
   ];
   if (next) {
-    lines.push(``, `Next: ${next.home} v ${next.away}, ${next.whenIST} IST`, `${next.ownerA} v ${next.ownerB}. ${STAKE_LINE}`);
+    const when = next.inText ? `${next.whenIST} IST · ${next.inText}` : `${next.whenIST} IST`;
+    lines.push(``, `Next: ${next.home} v ${next.away}, ${when}`, `${next.ownerA} v ${next.ownerB}. ${STAKE_LINE}`);
   }
   lines.push(``, `updated ${updatedIST} IST`);
   return lines.join('\n');

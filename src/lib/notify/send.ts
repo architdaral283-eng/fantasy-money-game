@@ -44,6 +44,30 @@ export async function fanOutText(db: SupabaseClient, templateKey: string, text: 
   }
 }
 
+/**
+ * One DM. No ceiling, no quiet gating: the group ceiling exists to keep the
+ * group readable, and a message to one person is nobody else's problem. The
+ * template_key is deliberately not 'group', so these never count against it.
+ * Returns false when that player has never linked a chat.
+ */
+export async function sendPlayer(db: SupabaseClient, playerId: string, templateKey: string, text: string): Promise<boolean> {
+  const tg = telegram();
+  const { data } = await db.from('players').select('telegram_chat_id').eq('id', playerId).maybeSingle();
+  const chatId = (data as { telegram_chat_id?: string } | null)?.telegram_chat_id;
+  if (!tg || !chatId) {
+    await log(db, playerId, 'telegram', templateKey, { text }, 'SKIPPED', undefined, !tg ? 'no bot token' : 'player not linked');
+    return false;
+  }
+  try {
+    const r = await tg.send(chatId, templateKey, { text });
+    await log(db, playerId, 'telegram', templateKey, { text }, 'SENT', r.messageId);
+    return true;
+  } catch (e) {
+    await log(db, playerId, 'telegram', templateKey, { text }, 'FAILED', undefined, (e as Error).message);
+    return false;
+  }
+}
+
 /** Standings PNG to all linked chats. fetchPng builds the image bytes. */
 export async function fanOutPhoto(db: SupabaseClient, templateKey: string, caption: string, fetchPng: () => Promise<ArrayBuffer>): Promise<void> {
   const tg = telegram();
@@ -106,15 +130,26 @@ function botToken(): string | null {
   return process.env.TELEGRAM_BOT_TOKEN ?? null;
 }
 
-async function botCall(method: string, body: object): Promise<{ message_id?: number } | null> {
+interface BotReply { ok?: boolean; result?: { message_id?: number }; description?: string }
+
+/** Raw Bot API reply, including the failure description. Telegram answers 400
+ *  with a reason, and some of those reasons are not failures. */
+async function botRaw(method: string, body: object): Promise<BotReply | null> {
   const t = botToken();
   if (!t) return null;
-  const res = await fetch(`https://api.telegram.org/bot${t}/${method}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
-  if (!res.ok) return null;
-  const j = (await res.json()) as { result?: { message_id?: number } };
-  return j.result ?? null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${t}/${method}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    return (await res.json()) as BotReply;
+  } catch {
+    return null;
+  }
+}
+
+async function botCall(method: string, body: object): Promise<{ message_id?: number } | null> {
+  const j = await botRaw(method, body);
+  return j?.ok ? (j.result ?? null) : null;
 }
 
 export async function answerCallback(id: string, text?: string, alert = false): Promise<void> {
@@ -123,11 +158,17 @@ export async function answerCallback(id: string, text?: string, alert = false): 
 
 /** Edit a bot message in place (approval outcome, pin refresh). Skips identical content. */
 export async function editText(chatId: string | number, messageId: number, text: string, keyboard?: { text: string; callback_data?: string; url?: string }[][]): Promise<boolean> {
-  const r = await botCall('editMessageText', {
+  const j = await botRaw('editMessageText', {
     chat_id: chatId, message_id: messageId, text: text.slice(0, 4000), parse_mode: 'HTML',
     ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
   });
-  return r !== null;
+  if (!j) return false;
+  if (j.ok) return true;
+  // "message is not modified" means the panel already says exactly this.
+  // Reading it as a failure made refreshPin fall through to posting a BRAND
+  // NEW pinned message, which is how a free surface turns into spam. Only the
+  // real failures — message deleted, chat gone — should trigger a repost.
+  return /not modified/i.test(j.description ?? '');
 }
 
 export async function pinMessage(chatId: string | number, messageId: number): Promise<void> {
