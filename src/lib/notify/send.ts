@@ -130,7 +130,7 @@ function botToken(): string | null {
   return process.env.TELEGRAM_BOT_TOKEN ?? null;
 }
 
-interface BotReply { ok?: boolean; result?: { message_id?: number }; description?: string }
+interface BotReply { ok?: boolean; result?: { message_id?: number; poll?: { id?: string } }; description?: string }
 
 /** Raw Bot API reply, including the failure description. Telegram answers 400
  *  with a reason, and some of those reasons are not failures. */
@@ -181,6 +181,32 @@ export async function sendHtml(chatId: string | number, text: string, keyboard?:
     ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
   });
   return r?.message_id ?? null;
+}
+
+/**
+ * A poll in the group. is_anonymous MUST be false: an anonymous poll still
+ * delivers poll_answer updates, but without a user on them, so there is
+ * nobody to credit and the whole league is unattributable.
+ */
+export async function sendPoll(chatId: string | number, question: string, options: string[]): Promise<{ pollId: string; messageId: number } | null> {
+  const j = await botRaw('sendPoll', {
+    chat_id: chatId,
+    question: question.slice(0, 300),
+    options: options.map((o) => o.slice(0, 100)),
+    is_anonymous: false,
+    allows_multiple_answers: false,
+  });
+  const pollId = j?.ok ? j.result?.poll?.id : undefined;
+  const messageId = j?.ok ? j.result?.message_id : undefined;
+  if (!pollId || !messageId) return null;
+  return { pollId, messageId };
+}
+
+/** Close voting. An already-closed poll is a success, not a failure. */
+export async function stopPoll(chatId: string | number, messageId: number): Promise<boolean> {
+  const j = await botRaw('stopPoll', { chat_id: chatId, message_id: messageId });
+  if (j?.ok) return true;
+  return /already been closed/i.test(j?.description ?? '');
 }
 
 export async function groupId(db: SupabaseClient): Promise<string | null> {

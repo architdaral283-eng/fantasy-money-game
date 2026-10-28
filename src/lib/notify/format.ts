@@ -17,6 +17,8 @@
 //  - parse_mode is HTML, so anything interpolated gets esc()'d
 // Pure functions only. Tested in format.test.ts.
 
+import { nthTime } from '@/lib/predictions/score';
+
 export function esc(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -356,6 +358,7 @@ export function buildHelp(commissioner: boolean): string {
       ['/h2h', 'two of you, head to head'],
       ['/nemesis', 'who you keep paying'],
       ['/rewind', 'the last seven days'],
+      ['/predictions', 'the prediction league'],
       ['/awards', 'season honours'],
     ]],
     ['Admin', [
@@ -566,4 +569,73 @@ export function buildMonthlyAwards(m: MonthlyBrief): string {
   const tally = `${money(m.moved)} moved across ${m.results} result${m.results === 1 ? '' : 's'}.`;
 
   return block(head('The month', m.label), people, clubs, big, tally);
+}
+
+// ---------------------------------------------------------------------------
+// The prediction league. No money on it, which is exactly why all four can
+// play every fixture instead of only the two who drafted the clubs.
+
+function nameList(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+export interface PredictionOutcome {
+  hits: string[];
+  /** `nth` is how many they have now called wrong this month, this one included. */
+  misses: { name: string; backed: string; nth: number }[];
+}
+
+/**
+ * Appended to the result message, never sent on its own — the point of the
+ * poll is to make the result message mean something to all four.
+ */
+export function buildPredictionResult(p: PredictionOutcome): string | null {
+  const total = p.hits.length + p.misses.length;
+  if (!total) return null;
+
+  const lines: string[] = [];
+  if (!p.hits.length) {
+    lines.push('Nobody called that one.');
+  } else if (!p.misses.length) {
+    lines.push(total === 1 ? `${esc(p.hits[0])} called it, alone.` : `All ${total} called it.`);
+  } else {
+    lines.push(`Called it: ${esc(nameList(p.hits))}.`);
+  }
+
+  // Two named misses at most. A third is a paragraph, and this rides on
+  // someone else's message.
+  for (const m of p.misses.slice(0, 2)) {
+    lines.push(`${esc(m.name)} backed ${esc(m.backed)}. ${nthTime(m.nth)} time this month.`);
+  }
+
+  return block(head('Predictions'), lines.join('\n'));
+}
+
+export interface PredictionStanding { name: string; played: number; hits: number; points: number; pct: number }
+
+/** The /predictions table. */
+export function buildPredictionTable(rows: PredictionStanding[], settled: number): string {
+  if (!rows.length || !settled) {
+    return block(
+      head('Predictions'),
+      'Nothing settled yet. A poll goes out with every fixture reminder — one tap, no money.',
+    );
+  }
+  const body = rows
+    .map((r) => `${padR(r.name, 9)} ${String(r.hits).padStart(2)}/${String(r.played).padEnd(2)}  ${String(r.pct).padStart(3)}%  ${String(r.points).padStart(2)} pt`)
+    .join('\n');
+  return block(
+    head('Predictions', `${settled} settled`),
+    pre(esc(body)),
+    'No money on it. There is a trophy in May.',
+  );
+}
+
+/** One line of it, for the Sunday roundup. */
+export function predictionLine(rows: PredictionStanding[]): string | null {
+  const played = rows.filter((r) => r.played > 0);
+  if (played.length < 2) return null;
+  const [top, ...rest] = played;
+  return `Predictions: ${esc(top.name)} leads on ${top.points}, ${rest.map((r) => `${esc(r.name)} ${r.points}`).join(', ')}.`;
 }

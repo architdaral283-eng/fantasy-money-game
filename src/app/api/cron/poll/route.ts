@@ -47,7 +47,7 @@ export async function POST(req: Request) {
 
   const provider = new FootballDataOrgProvider(token);
   const nowMs = Date.now();
-  const summary = { synced: 0, proposed: 0, autoWritten: 0, autoLogged: 0, reminders: 0, scouted: 0, nearMisses: 0, espnFallback: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
+  const summary = { synced: 0, proposed: 0, autoWritten: 0, autoLogged: 0, reminders: 0, scouted: 0, nearMisses: 0, pollsOpened: 0, pollsSettled: 0, espnFallback: 0, batched: false, errors: [] as string[], perCompetition: [] as { code: string; total: number; ownedReturned: number; matched: number; scheduled: number; skipped?: boolean }[] };
 
   // Per-run reads that cannot change mid-run, memoised on first use so an idle
   // tick (no finished fixture, no reminder due) issues no extra query. A read
@@ -376,9 +376,25 @@ export async function POST(req: Request) {
           // the group saw a bare table and then the text explaining it. Nobody
           // reads the pinned message, which is why the photo is posted inline.
           const roast = await fireRoast(db, fixture.id, false).catch(() => null);
-          if (roast) {
+
+          // The poll verdict rides on the roast instead of taking a message
+          // of its own. A Saturday with two fixtures spends two reminders,
+          // two warnings, two roasts and two standings images; a ninth and
+          // tenth message would push the nightly brief over the ceiling and
+          // into tomorrow's 16:30 digest.
+          let verdict: string | null = null;
+          try {
+            const { settlePredictions } = await import('@/lib/notify/predict');
+            verdict = await settlePredictions(db, fixture.id);
+            if (verdict) summary.pollsSettled++;
+          } catch (e) {
+            summary.errors.push(`predictions failed for ${fixture.id}: ${(e as Error).message}`);
+          }
+
+          const outgoing = [roast, verdict].filter((x): x is string => typeof x === 'string' && x !== '').join('\n\n');
+          if (outgoing) {
             const { sendGroup } = await import('@/lib/notify/quiet');
-            await sendGroup(db, roast);
+            await sendGroup(db, outgoing);
           }
           try {
             const pngRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app'}/api/og/standings`);
@@ -505,6 +521,9 @@ export async function POST(req: Request) {
     // DMs have no ceiling, so this costs the group nothing.
     const { scoutDms } = await import('@/lib/notify/scout-dm');
     summary.scouted += await scoutDms(db, { ...f, id }, todayFixture).catch(() => 0);
+    // And a poll, so the two with no money on it still have a reason to care.
+    const { openPollFor } = await import('@/lib/notify/predict');
+    if (await openPollFor(db, { ...f, id }).catch(() => false)) summary.pollsOpened++;
   }
 
   // release anything queued through quiet hours or the daily ceiling
@@ -530,6 +549,10 @@ export async function POST(req: Request) {
       const mins = Math.max(1, Math.ceil((Date.parse(f.kickoff_utc) - Date.now()) / 60000));
       await db.from('fixtures').update({ pre_match_sent_at: new Date().toISOString() }).eq('id', f.id);
       await sendGroup(db, await fixtureNotice(db, f, 'prematch', mins), { urgent: true });
+      // Voting closes here. scorePoll() also throws out anything cast after
+      // kickoff, so a missed tick cannot turn into a 89th-minute prediction.
+      const { closePollFor } = await import('@/lib/notify/predict');
+      await closePollFor(db, f.id).catch(() => false);
       prematch++;
     }
   }

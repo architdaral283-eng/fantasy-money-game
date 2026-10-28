@@ -91,7 +91,14 @@ export async function POST(req: Request) {
     landmark: landmark(nowMs, playedPaying, totalPaying),
   });
 
-  await sendGroup(db, text, { urgent: true });
+  // The prediction league's one line, appended rather than threaded through
+  // buildWeeklyText — the roundup already carries eight features and the
+  // builder does not need a ninth parameter for one sentence.
+  const { predictionSummary } = await import('@/lib/notify/predict');
+  const predictions = await predictionSummary(db).catch(() => null);
+  const full = [text, predictions].filter((x): x is string => typeof x === 'string' && x !== '').join('\n\n');
+
+  await sendGroup(db, full, { urgent: true });
   return NextResponse.json({
     ok: true, players: table.length, rivalry: !!riv, moment: !!moment,
     landmark: landmark(nowMs, playedPaying, totalPaying),

@@ -106,6 +106,7 @@ interface Update {
   update_id: number;
   message?: { message_id: number; text?: string; chat?: { id?: number; type?: string } ; from?: { id?: number } };
   callback_query?: { id?: string; data?: string; message?: { chat?: { id?: number }; message_id?: number }; from?: { id?: number } };
+  poll_answer?: { poll_id?: string; user?: { id?: number }; option_ids?: number[] };
 }
 
 export async function POST(req: Request) {
@@ -121,6 +122,27 @@ export async function POST(req: Request) {
   // dedup: Telegram redelivers on timeout — process each update_id once
   const { error: dupErr } = await db.from('processed_updates').insert({ update_id: update.update_id });
   if (dupErr) return NextResponse.json({ ok: true, deduped: true });
+
+  // ——— prediction votes ———
+  // Telegram only delivers these when poll_answer is in the webhook's
+  // allowed_updates. If votes never arrive, that is the first thing to check.
+  if (update.poll_answer?.poll_id) {
+    const pa = update.poll_answer;
+    const voter = await playerByTg(db, pa.user?.id);
+    if (voter) {
+      await markInbound(db, voter.id);
+      if (!pa.option_ids?.length) {
+        // Retracted. Telegram sends an empty option list, not a deletion.
+        await db.from('predictions').delete().eq('poll_id', pa.poll_id).eq('player_id', voter.id);
+      } else {
+        await db.from('predictions').upsert(
+          { poll_id: pa.poll_id, player_id: voter.id, choice: pa.option_ids[0], answered_at: new Date().toISOString() },
+          { onConflict: 'poll_id,player_id' },
+        );
+      }
+    }
+    return NextResponse.json({ ok: true, vote: true });
+  }
 
   // ——— callbacks: answer FIRST (3s budget), then work ———
   if (update.callback_query?.data) {
@@ -205,8 +227,14 @@ export async function POST(req: Request) {
         await refreshPin(db);
         // roast auto-fire: ledger truth + authored line, quiet-aware
         if ((approval as { subject_type?: string; subject_id?: string } | null)?.subject_type === 'FIXTURE') {
-          const roast = await fireRoast(db, (approval as { subject_id: string }).subject_id, false).catch(() => null);
-          if (roast) await sendGroup(db, roast);
+          const subject = (approval as { subject_id: string }).subject_id;
+          const roast = await fireRoast(db, subject, false).catch(() => null);
+          // Same as the poller: the poll verdict goes out attached to the
+          // roast, not as a message of its own.
+          const { settlePredictions } = await import('@/lib/notify/predict');
+          const verdict = await settlePredictions(db, subject).catch(() => null);
+          const outgoing = [roast, verdict].filter((x): x is string => typeof x === 'string' && x !== '').join('\n\n');
+          if (outgoing) await sendGroup(db, outgoing);
         }
         // standings photo: DMs instantly, group follows the same quiet discipline
         try {
@@ -793,6 +821,12 @@ async function statsReply(
     ));
     return;
   }
+  if (cmd === '/predictions') {
+    const { predictionTable } = await import('@/lib/notify/predict');
+    await reply(await predictionTable(db));
+    return NextResponse.json({ ok: true });
+  }
+
   if (cmd === '/settle') {
     const { settle } = await import('@/lib/awards/compute');
     const net: Record<string, number> = { archit: 0, vedant: 0, harshal: 0, anmol: 0 };
