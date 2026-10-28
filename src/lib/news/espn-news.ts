@@ -62,7 +62,6 @@ export function parseNews(json: unknown, nowMs: number, windowHours = 36): NewsI
 
 export interface DigestSelection {
   ours: NewsItem[];
-  general: NewsItem[];
   /** Every id shown tonight, to be remembered so nothing repeats tomorrow. */
   ids: string[];
 }
@@ -70,6 +69,8 @@ export interface DigestSelection {
 /**
  * Pick what goes in tonight's brief.
  *
+ * - only articles tied to a club one of the four owns. A headline about
+ *   nobody's club has no name to hang it on and reads as a non sequitur.
  * - de-duplicated by article id AND by headline, because the same story is
  *   syndicated into several league feeds
  * - nothing already sent on a previous night
@@ -79,9 +80,9 @@ export interface DigestSelection {
  */
 export function selectDigest(
   items: NewsItem[],
-  opts: { seenIds?: Iterable<string>; maxOurs?: number; maxGeneral?: number } = {},
+  opts: { seenIds?: Iterable<string>; maxOurs?: number } = {},
 ): DigestSelection {
-  const { maxOurs = 6, maxGeneral = 2 } = opts;
+  const { maxOurs = 6 } = opts;
   const seen = new Set(opts.seenIds ?? []);
   const byId = new Map<string, NewsItem>();
   const headlines = new Set<string>();
@@ -91,10 +92,9 @@ export function selectDigest(
     byId.set(it.id, it);
     headlines.add(key);
   }
-  const fresh = [...byId.values()];
   const ours: NewsItem[] = [];
   const usedClubs = new Set<string>();
-  for (const it of fresh) {
+  for (const it of byId.values()) {
     if (ours.length >= maxOurs) break;
     if (!it.clubIds.length) continue;
     const club = it.clubIds.find((c) => !usedClubs.has(c));
@@ -102,6 +102,5 @@ export function selectDigest(
     usedClubs.add(club);
     ours.push({ ...it, clubIds: [club, ...it.clubIds.filter((c) => c !== club)] });
   }
-  const general = fresh.filter((it) => !it.clubIds.length).slice(0, maxGeneral);
-  return { ours, general, ids: [...ours, ...general].map((i) => i.id) };
+  return { ours, ids: ours.map((i) => i.id) };
 }

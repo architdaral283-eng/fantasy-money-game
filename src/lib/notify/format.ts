@@ -199,53 +199,29 @@ export function buildFixtureList(rows: ListFixture[], title = 'Next up'): string
 // ——————————————————————————— nightly brief ———————————————————————————
 
 export interface DigestClubItem { club: string; owner: string; headline: string }
-export interface DigestNext {
-  home: string; away: string; ownerA: string; ownerB: string;
-  compId: string; compName?: string | null; timeIST: string | null; dateIST: string | null;
-}
 
 /**
  * The 23:00 IST brief, for the days between fixtures when the group goes quiet.
  *
- * Headlines only — no commentary, no invented context. Every line is something
- * ESPN published today about a club one of these four owns, so the club name
- * and the owner's name sit together and the rest of the group can do the work.
+ * Club, owner, headline. Nothing else.
+ *
+ * Three things were in here and came out after Archit read one: section
+ * headings (noise), general football headlines (a bare headline about nobody
+ * you own reads as a non sequitur — there is no club and no name to anchor
+ * it), and the next fixture (the 24-hour reminder and the 30-minute warning
+ * already cover it, and repeating it nightly just trains people to skim).
  */
-export function buildDigestText(
-  dateLabel: string,
-  ours: DigestClubItem[],
-  general: string[],
-  next: DigestNext | null,
-  weekStake = 0,
-): string {
-  const lines: string[] = [];
-  if (ours.length) {
-    lines.push('YOUR SIXTEEN');
-    for (const it of ours) lines.push(` ${it.club} · ${it.owner}`, `   ${it.headline}`);
+export function buildDigestText(dateLabel: string, ours: DigestClubItem[]): string {
+  if (!ours.length) {
+    return block(
+      head('Tonight', dateLabel),
+      'Nothing happened to any of your sixteen today. Sixteen clubs, four leagues, not one of them worth a headline.',
+    );
   }
-  if (general.length) {
-    if (lines.length) lines.push('');
-    lines.push('ELSEWHERE');
-    for (const h of general) lines.push(`   ${h}`);
-  }
-
-  const body = lines.length
-    ? pre(esc(lines.join('\n')))
-    : 'Nothing happened to any of your sixteen today. Sixteen clubs, four leagues, not one of them worth a headline.';
-
-  const nextBlock = next
-    ? [
-      `Next: ${esc(next.home)} v ${esc(next.away)}${next.timeIST ? `, ${next.dateIST} ${next.timeIST} IST` : ', date TBC'}`,
-      `${esc(next.ownerA)} v ${esc(next.ownerB)} · ${compShort(next.compId, next.compName)}. ${STAKE_LINE}`,
-    ].join('\n')
-    : 'Nothing counted on the calendar.';
-
-  return block(
-    head('Tonight', dateLabel),
-    body,
-    nextBlock,
-    weekStake > 0 ? `${money(weekStake)} in play over the next seven days.` : null,
-  );
+  const body = ours
+    .map((it) => `${esc(it.club)} · ${esc(it.owner)}\n   ${esc(it.headline)}`)
+    .join('\n\n');
+  return block(head('Tonight', dateLabel), pre(body));
 }
 
 // ——————————————————————————— ledger ———————————————————————————

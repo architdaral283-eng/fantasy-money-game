@@ -76,16 +76,21 @@ describe('choosing tonight\'s brief', () => {
     expect(got.ours.map((o) => o.headline)).toEqual(['Arsenal one', 'Napoli one']);
   });
 
-  it('caps both sections and reports every id shown', () => {
-    const items = [
-      ...['arsenal', 'bayern', 'napoli', 'roma', 'inter', 'juventus', 'barcelona']
-        .map((c, i) => mk('c' + i, [c], 'club ' + i, i)),
-      ...[0, 1, 2].map((i) => mk('g' + i, [], 'general ' + i, 20 + i)),
-    ];
-    const got = selectDigest(items, { maxOurs: 6, maxGeneral: 2 });
+  it('caps the list and reports every id shown', () => {
+    const items = ['arsenal', 'bayern', 'napoli', 'roma', 'inter', 'juventus', 'barcelona']
+      .map((c, i) => mk('c' + i, [c], 'club ' + i, i));
+    const got = selectDigest(items, { maxOurs: 6 });
     expect(got.ours).toHaveLength(6);
-    expect(got.general).toHaveLength(2);
-    expect(got.ids).toHaveLength(8);
+    expect(got.ids).toHaveLength(6);
+  });
+
+  it('drops anything not tied to a club one of them owns', () => {
+    // A bare headline about nobody's club has no name to hang it on.
+    const got = selectDigest([
+      mk('g', [], 'How a tiny Basque club spawned the top managers'),
+      mk('c', ['roma'], 'Dybala out for a month', 5),
+    ]);
+    expect(got.ours.map((o) => o.headline)).toEqual(['Dybala out for a month']);
   });
 
   it('newest first', () => {
@@ -95,36 +100,27 @@ describe('choosing tonight\'s brief', () => {
 });
 
 describe('the brief itself', () => {
-  const next = {
-    home: 'Bayern Munich', away: 'Borussia Dortmund', ownerA: 'Harshal', ownerB: 'Anmol',
-    compId: 'bundesliga', timeIST: '23:00', dateIST: 'Sat 31 Oct',
-  };
-
-  it('puts the club and the owner on the same line', () => {
+  it('is club, owner, headline and nothing else', () => {
     const t = buildDigestText('Wed 28 Oct', [
       { club: 'Arsenal', owner: 'Archit', headline: 'Fleetwood Town knock Arsenal out of the League Cup' },
-    ], ['Ballon d\'Or shortlist announced'], next, 1500);
+      { club: 'Borussia Dortmund', owner: 'Anmol', headline: 'Liverpool target Nmecha' },
+    ]);
     expect(t.startsWith('TONIGHT · Wed 28 Oct')).toBe(true);
     expect(t).toContain('Arsenal · Archit');
-    expect(t).toContain('Fleetwood Town knock Arsenal out');
-    expect(t).toContain('ELSEWHERE');
-    expect(t).toContain('Next: Bayern Munich v Borussia Dortmund, Sat 31 Oct 23:00 IST');
-    expect(t).toContain('Harshal v Anmol · Bundesliga');
-    expect(t).toContain('₹1,500 in play over the next seven days.');
+    expect(t).toContain('Borussia Dortmund · Anmol');
+    // the three things that were cut after the first draft
+    expect(t).not.toContain('YOUR SIXTEEN');
+    expect(t).not.toContain('ELSEWHERE');
+    expect(t).not.toContain('Next:');
+    expect(t).not.toContain('in play');
   });
 
   it('says so plainly on a dead news day', () => {
-    const t = buildDigestText('Wed 28 Oct', [], [], next, 0);
-    expect(t).toContain('Nothing happened to any of your sixteen today');
-    expect(t).not.toContain('in play over the next seven days');
-  });
-
-  it('handles an empty calendar', () => {
-    expect(buildDigestText('Wed 28 Oct', [], [], null, 0)).toContain('Nothing counted on the calendar.');
+    expect(buildDigestText('Wed 28 Oct', [])).toContain('Nothing happened to any of your sixteen today');
   });
 
   it('escapes a headline that would otherwise break HTML parse mode', () => {
-    const t = buildDigestText('Wed 28 Oct', [{ club: 'Inter', owner: 'Anmol', headline: 'Inter & <Lautaro> stay' }], [], null, 0);
+    const t = buildDigestText('Wed 28 Oct', [{ club: 'Inter', owner: 'Anmol', headline: 'Inter & <Lautaro> stay' }]);
     expect(t).toContain('Inter &amp; &lt;Lautaro&gt; stay');
   });
 });

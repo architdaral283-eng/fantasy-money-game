@@ -11,8 +11,8 @@
 import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { sendGroup } from '@/lib/notify/quiet';
-import { buildDigestText, type DigestClubItem, type DigestNext } from '@/lib/notify/format';
-import { istClock, istDay } from '@/lib/notify/fixture-notice';
+import { buildDigestText, type DigestClubItem } from '@/lib/notify/format';
+import { istDay } from '@/lib/notify/fixture-notice';
 import { NEWS_LEAGUES, parseNews, selectDigest, type NewsItem } from '@/lib/news/espn-news';
 
 export const maxDuration = 60;
@@ -57,52 +57,25 @@ export async function POST(req: Request) {
 
   const picked = selectDigest(items, { seenIds });
 
-  const [{ data: clubs }, { data: bal }, { data: comps }] = await Promise.all([
+  const [{ data: clubs }, { data: bal }] = await Promise.all([
     db.from('clubs').select('id,name,owner_id'),
     db.from('player_balances').select('id,name'),
-    db.from('competitions').select('id,name'),
   ]);
   const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
   const pmap = new Map(((bal ?? []) as { id: string; name: string }[]).map((b) => [b.id, b.name]));
-  const kmap = new Map(((comps ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]));
-  const ownerOfClub = (clubId: string) => pmap.get(cmap.get(clubId)?.owner_id ?? '') ?? cmap.get(clubId)?.owner_id ?? '?';
 
   const ours: DigestClubItem[] = picked.ours.map((it) => ({
     club: cmap.get(it.clubIds[0])?.name ?? it.clubIds[0],
-    owner: ownerOfClub(it.clubIds[0]),
+    owner: pmap.get(cmap.get(it.clubIds[0])?.owner_id ?? '') ?? cmap.get(it.clubIds[0])?.owner_id ?? '?',
     headline: it.headline,
   }));
 
-  // Next counted fixture, and what the coming week is worth.
-  const weekEnd = new Date(nowMs + 7 * 24 * 3600 * 1000).toISOString();
-  const { data: fx } = await db.from('fixtures')
-    .select('home_club_id,away_club_id,competition_id,kickoff_utc')
-    .eq('status', 'SCHEDULED').eq('is_same_owner', false)
-    .gt('kickoff_utc', new Date(nowMs).toISOString())
-    .order('kickoff_utc').limit(20);
-  const upcoming = (fx ?? []) as { home_club_id: string; away_club_id: string; competition_id: string; kickoff_utc: string }[];
-  const first = upcoming[0];
-  const next: DigestNext | null = first ? {
-    home: cmap.get(first.home_club_id)?.name ?? first.home_club_id,
-    away: cmap.get(first.away_club_id)?.name ?? first.away_club_id,
-    ownerA: ownerOfClub(first.home_club_id),
-    ownerB: ownerOfClub(first.away_club_id),
-    compId: first.competition_id,
-    compName: kmap.get(first.competition_id) ?? null,
-    timeIST: istClock(first.kickoff_utc),
-    dateIST: istDay(first.kickoff_utc),
-  } : null;
-  const weekStake = upcoming.filter((f) => f.kickoff_utc <= weekEnd).length * 500;
-
-  const text = buildDigestText(istDay(new Date(nowMs).toISOString()), ours, picked.general.map((g) => g.headline), next, weekStake);
+  const text = buildDigestText(istDay(new Date(nowMs).toISOString()), ours);
   await sendGroup(db, text, { urgent: true });
 
   // Remember what went out, newest first, capped.
   const nextSeen = [...picked.ids, ...seenIds].slice(0, SEEN_CAP);
   await db.from('config').upsert({ key: SEEN_KEY, value: { ids: nextSeen } }, { onConflict: 'key' });
 
-  return NextResponse.json({
-    ok: true, scanned: items.length, ours: ours.length, general: picked.general.length,
-    weekStake, errors,
-  });
+  return NextResponse.json({ ok: true, scanned: items.length, ours: ours.length, errors });
 }
