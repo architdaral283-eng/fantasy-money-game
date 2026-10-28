@@ -516,9 +516,20 @@ export async function POST(req: Request) {
   }
 
   // ——— stakes, projections, social (pure arithmetic over the ledger) ———
-  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct'].includes(cmdline)) {
+  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct', '/predictions', '/setup'].includes(cmdline)) {
     await statsReply(db, reply, cmdline, rest, me.id, me.role, String(chatId));
     return NextResponse.json({ ok: true });
+  }
+
+  // Anything still starting with "/" matched no handler at all. It used to
+  // fall straight through to the score parser, so a typo — or a command added
+  // to the menu and not to the dispatch list above — came back as
+  // "Could not parse. Format: Arsenal 2-0 Manchester City", which tells you
+  // nothing about what actually went wrong.
+  if (text.startsWith('/')) {
+    if (isGroup) return NextResponse.json({ ok: true });
+    await reply(`${esc(cmdline)} is not a command here. Send /help for the list.`);
+    return NextResponse.json({ ok: true, unknownCommand: cmdline });
   }
 
   // fallback: one-line score? (DM only — groups stay silent on non-commands)
