@@ -571,6 +571,8 @@ export function buildSilenceLine(rows: SilenceRow[]): string | null {
 
 export interface MonthlyLine { name: string; amount: number }
 export interface MonthlyBrief {
+  /** 'month' heads it "THE MONTH"; 'season' heads it "THE SEASON" and renames the awards. */
+  period?: 'month' | 'season';
   label: string;                       // 'October 2026'
   owner: MonthlyLine | null;
   flop: MonthlyLine | null;
@@ -581,18 +583,27 @@ export interface MonthlyBrief {
   results: number;
 }
 
-/** The 1st-of-the-month message. Awards only — the table lives in the pin. */
+/** The 1st-of-the-month message, and the same shape again in June. */
 export function buildMonthlyAwards(m: MonthlyBrief): string {
+  const season = m.period === 'season';
+  const heading = season ? 'The season' : 'The month';
+  const of = season ? 'of the season' : 'of the month';
+
   if (m.results === 0 && m.moved === 0) {
-    return block(head('The month', m.label), 'Nothing moved. Nobody won anything. A month of pure talk.');
+    return block(
+      head(heading, m.label),
+      season
+        ? 'Nothing moved all season. Which would take some explaining.'
+        : 'Nothing moved. Nobody won anything. A month of pure talk.',
+    );
   }
   const people = [
-    m.owner ? `Owner of the month: ${esc(m.owner.name)}, ${signed(m.owner.amount)}` : null,
-    m.flop ? `Flop of the month: ${esc(m.flop.name)}, ${signed(m.flop.amount)}` : null,
+    m.owner ? `Owner ${of}: ${esc(m.owner.name)}, ${signed(m.owner.amount)}` : null,
+    m.flop ? `Flop ${of}: ${esc(m.flop.name)}, ${signed(m.flop.amount)}` : null,
   ].filter(Boolean).join('\n');
 
   const clubs = [
-    m.club ? `Club of the month: ${esc(m.club.name)} — ${esc(m.club.owner)}, ${signed(m.club.amount)}` : null,
+    m.club ? `Club ${of}: ${esc(m.club.name)} — ${esc(m.club.owner)}, ${signed(m.club.amount)}` : null,
     m.worstClub ? `Worst club: ${esc(m.worstClub.name)} — ${esc(m.worstClub.owner)}, ${signed(m.worstClub.amount)}` : null,
   ].filter(Boolean).join('\n');
 
@@ -602,7 +613,7 @@ export function buildMonthlyAwards(m: MonthlyBrief): string {
 
   const tally = `${money(m.moved)} moved across ${m.results} result${m.results === 1 ? '' : 's'}.`;
 
-  return block(head('The month', m.label), people, clubs, big, tally);
+  return block(head(heading, m.label), people, clubs, big, tally);
 }
 
 // ---------------------------------------------------------------------------

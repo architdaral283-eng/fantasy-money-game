@@ -126,6 +126,28 @@ describe('the monthly message', () => {
     expect(t).toContain('₹7,500 moved across 11 results.');
   });
 
+  it('renames every award for the season report', () => {
+    const t = buildMonthlyAwards({
+      period: 'season',
+      label: 'Season 2026/27',
+      owner: { name: 'Vedant', amount: 9000 },
+      flop: { name: 'Anmol', amount: -7500 },
+      club: { name: 'Real Madrid', owner: 'Vedant', amount: 4500 },
+      worstClub: { name: 'Barcelona', owner: 'Anmol', amount: -4000 },
+      biggest: null, moved: 42000, results: 63,
+    });
+    expect(t.startsWith('THE SEASON · Season 2026/27')).toBe(true);
+    expect(t).toContain('Owner of the season: Vedant');
+    expect(t).toContain('Club of the season: Real Madrid');
+    expect(t).not.toContain('of the month');
+  });
+
+  it('has a different line for an empty season than an empty month', () => {
+    const none = { label: 'x', owner: null, flop: null, club: null, worstClub: null, biggest: null, moved: 0, results: 0 };
+    expect(buildMonthlyAwards({ ...none, period: 'season' })).toContain('take some explaining');
+    expect(buildMonthlyAwards(none)).toContain('A month of pure talk');
+  });
+
   it('has something to say about a month where nothing happened', () => {
     const t = buildMonthlyAwards({
       label: 'June 2027', owner: null, flop: null, club: null, worstClub: null,
