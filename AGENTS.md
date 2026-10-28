@@ -209,6 +209,24 @@ they are drawn (announcing each in the group) and proposes finished ones.
   remains for reference; `API_FOOTBALL_KEY` is dead config and can be removed
   from Vercel.
 
+## The nightly brief (23:00 IST)
+
+`/api/cron/digest`, pg_cron job `nightly-digest` at 17:30 UTC (migration 0023).
+Fills the week-long gaps between counted fixtures.
+
+- **Straight headlines. Nothing is generated and nothing is editorialised** —
+  Archit chose this over an AI-written version. Every line is something ESPN
+  published, printed next to the club and the owner who drafted it.
+- Source is ESPN's news feed, one call per league (`NEWS_LEAGUES`). Articles
+  are matched to our clubs **by ESPN team id** out of `TEAM_ID_MAP.espn`, never
+  by club name — "United", "Inter" and "Madrid" are why that rule exists.
+- `Media` (video) and `Recap` (match reports we post ourselves) are dropped.
+- One slot per club, so a busy Arsenal week cannot fill the whole brief.
+- Headlines already sent are remembered in `config.digest_seen_ids` (newest
+  400) and never repeat.
+- Sends with `urgent: true`: 23:00 is outside quiet hours anyway, but the flag
+  also keeps it from being pushed past the six-message group ceiling.
+
 ## The roast library (0022 is the live one)
 
 0012 was brutal about clubs and silent about the men. 0019 was sharp about the
