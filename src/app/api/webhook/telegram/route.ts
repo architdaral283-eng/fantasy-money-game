@@ -521,7 +521,7 @@ export async function POST(req: Request) {
   }
 
   // ——— stakes, projections, social (pure arithmetic over the ledger) ———
-  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct', '/predictions', '/setup'].includes(cmdline)) {
+  if (['/stakes', '/exposure', '/swing', '/streak', '/rewind', '/taunt', '/h2h', '/nemesis', '/club', '/ledger', '/awards', '/settle', '/quiet', '/correct', '/predictions', '/setup', '/clubform'].includes(cmdline)) {
     await statsReply(db, reply, cmdline, rest, me.id, me.role, String(chatId));
     return NextResponse.json({ ok: true });
   }
@@ -889,6 +889,12 @@ async function statsReply(
     // .env here has TELEGRAM_BOT_TOKEN blank on purpose.
     const { registerWithTelegram, setupReportText } = await import('@/lib/notify/telegram-admin');
     await reply(block(head('Telegram setup'), setupReportText(await registerWithTelegram(APP_URL))));
+    return;
+  }
+
+  if (cmd === '/clubform') {
+    const { clubFormTable } = await import('@/lib/notify/club-form');
+    await reply(await clubFormTable(db));
     return;
   }
 

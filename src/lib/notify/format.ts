@@ -366,6 +366,7 @@ export const COMMAND_SECTIONS: [string, [string, string][]][] = [
       ['/trophies', 'live races'],
       ['/club', 'one club, whole season'],
       ['/streak', 'everyone’s form'],
+      ['/clubform', 'your four clubs, added up'],
     ]],
     ['Needle', [
       ['/taunt', 'roast the latest loser'],
@@ -763,4 +764,44 @@ export function buildTeamNews(n: TeamNews): string {
     pre(esc(n.xi.join(', '))),
     [n.bench > 0 ? `${n.bench} on the bench.` : null, note].filter(Boolean).join(' '),
   );
+}
+
+// ---------------------------------------------------------------------------
+// The club form side-table. A second leaderboard, for whoever is losing the
+// first one.
+
+export interface ClubFormRow { name: string; points: number; gf: number; ga: number; diff: number; clubs: number }
+
+export function buildClubForm(
+  rows: ClubFormRow[],
+  best: { club: string; owner: string; diff: number } | null,
+  worst: { club: string; owner: string; diff: number } | null,
+): string {
+  if (!rows.length || rows.every((r) => r.clubs === 0)) {
+    return block(head('Club form'), 'No league tables available right now. Try again later.');
+  }
+  const body = rows
+    .map((r) => `${padR(r.name, 9)} ${String(r.points).padStart(3)} pts   ${String(r.gf).padStart(3)} GF  ${String(r.ga).padStart(3)} GA  ${r.diff >= 0 ? '+' : '−'}${String(Math.abs(r.diff)).padStart(2)}`)
+    .join('\n');
+
+  const notes = [
+    best ? `Best club: ${esc(best.club)} — ${esc(best.owner)}, ${best.diff >= 0 ? '+' : '−'}${Math.abs(best.diff)}.` : null,
+    worst ? `Worst: ${esc(worst.club)} — ${esc(worst.owner)}, ${worst.diff >= 0 ? '+' : '−'}${Math.abs(worst.diff)}.` : null,
+  ].filter(Boolean).join('\n');
+
+  return block(
+    head('Club form', 'league games only'),
+    pre(esc(body)),
+    notes,
+    'Four clubs each, added up. The money table says something else.',
+  );
+}
+
+/** One line of it for the Sunday roundup. */
+export function clubFormLine(rows: ClubFormRow[]): string | null {
+  const live = rows.filter((r) => r.clubs > 0);
+  if (live.length < 2) return null;
+  const top = live[0];
+  const bottom = live[live.length - 1];
+  return `Club form: ${esc(top.name)}'s four lead on ${top.points} points, ${esc(bottom.name)}'s bottom on ${bottom.points}.`;
 }

@@ -95,8 +95,14 @@ export async function POST(req: Request) {
   // buildWeeklyText — the roundup already carries eight features and the
   // builder does not need a ninth parameter for one sentence.
   const { predictionSummary } = await import('@/lib/notify/predict');
-  const predictions = await predictionSummary(db).catch(() => null);
-  const full = [text, predictions].filter((x): x is string => typeof x === 'string' && x !== '').join('\n\n');
+  const { clubFormSummary } = await import('@/lib/notify/club-form');
+  const [predictions, clubForm] = await Promise.all([
+    predictionSummary(db).catch(() => null),
+    clubFormSummary(db).catch(() => null),
+  ]);
+  const full = [text, clubForm, predictions]
+    .filter((x): x is string => typeof x === 'string' && x !== '')
+    .join('\n\n');
 
   await sendGroup(db, full, { urgent: true });
   return NextResponse.json({
