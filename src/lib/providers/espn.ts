@@ -24,7 +24,7 @@ export const ESPN_LEAGUE: Record<string, string> = {
   communityshield: 'eng.charity', dflsupercup: 'ger.super_cup',
 };
 
-const CLUB_BY_ESPN = new Map<string, string>(
+export const CLUB_BY_ESPN = new Map<string, string>(
   Object.entries(TEAM_ID_MAP).map(([club, ids]) => [String(ids.espn), club]),
 );
 

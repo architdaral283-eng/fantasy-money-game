@@ -537,6 +537,30 @@ export async function POST(req: Request) {
     return png;
   }).catch(() => ({ released: 0 }));
 
+  // ── Team news, 75 to 20 minutes out, by DM ────────────────────────────────
+  // ESPN publishes lineups around an hour before kickoff, so the window is
+  // wide and lineup_sent_at is set ONLY when a DM actually left. An empty
+  // answer means "not published yet", and marking the fixture done on one of
+  // those would silence it for good.
+  let lineups = 0;
+  const { data: nearly } = await db.from('fixtures')
+    .select('id,competition_id,home_club_id,away_club_id,kickoff_utc')
+    .eq('status', 'SCHEDULED').eq('is_same_owner', false).is('lineup_sent_at', null)
+    .gt('kickoff_utc', new Date(nowMs + 20 * 60 * 1000).toISOString())
+    .lte('kickoff_utc', new Date(nowMs + 75 * 60 * 1000).toISOString());
+  for (const f of (nearly ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string; kickoff_utc: string }[]) {
+    try {
+      const { lineupDms } = await import('@/lib/notify/lineup-dm');
+      const n = await lineupDms(db, f);
+      if (n > 0) {
+        await db.from('fixtures').update({ lineup_sent_at: new Date().toISOString() }).eq('id', f.id);
+        lineups += n;
+      }
+    } catch (e) {
+      summary.errors.push(`lineups failed for ${f.id}: ${(e as Error).message}`);
+    }
+  }
+
   // 30-minute pre-match group warning — time-sensitive by definition, always immediate
   const { data: soon } = await db.from('fixtures').select('id,competition_id,home_club_id,away_club_id,kickoff_utc,round')
     .eq('status', 'SCHEDULED').is('pre_match_sent_at', null)
@@ -578,5 +602,5 @@ export async function POST(req: Request) {
     summary.errors.push(`pin refresh failed: ${(e as Error).message}`);
   }
 
-  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, liveNow, cupsFound, cupResults, scheduleSync: doScheduleSync, forced: forceSync });
+  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, liveNow, lineups, cupsFound, cupResults, scheduleSync: doScheduleSync, forced: forceSync });
 }
