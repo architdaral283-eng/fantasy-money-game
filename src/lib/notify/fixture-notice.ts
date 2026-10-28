@@ -4,7 +4,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildFixtureNotice } from '@/lib/notify/format';
-import { h2hTally, h2hText } from '@/lib/stats/h2h';
+import { h2hTally, h2hText, lastMeeting, lastMeetingText } from '@/lib/stats/h2h';
 
 export interface NoticeFixture {
   id?: string;
@@ -34,12 +34,13 @@ export async function fixtureNotice(
   kind: 'tomorrow' | 'today' | 'prematch' | 'drawn',
   mins?: number,
 ): Promise<string> {
-  const [{ data: clubs }, { data: bal }, { data: comps }, { data: fx }, { data: wld }] = await Promise.all([
+  const [{ data: clubs }, { data: bal }, { data: comps }, { data: fx }, { data: wld }, { data: res }] = await Promise.all([
     db.from('clubs').select('id,name,owner_id'),
     db.from('player_balances').select('id,name,net_inr'),
     db.from('competitions').select('id,name').eq('id', f.competition_id),
-    db.from('fixtures').select('id,home_club_id,away_club_id,status').eq('status', 'RECORDED'),
+    db.from('fixtures').select('id,home_club_id,away_club_id,status,kickoff_utc').eq('status', 'RECORDED'),
     db.from('wld_records').select('player_id,fixture_id,outcome'),
+    db.from('results').select('fixture_id,h90,a90'),
   ]);
 
   const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
@@ -62,6 +63,23 @@ export async function fixtureNotice(
 
   const sameOwner = oa !== '' && oa === ob;
 
+  // What happened the last time these two played each other for money. The
+  // record ("Vedant leads 3-1") is a number; this is the grudge.
+  const prev = sameOwner ? null : lastMeeting(
+    oa, ob,
+    ((fx ?? []) as { id: string; home_club_id: string; away_club_id: string; status: string; kickoff_utc: string | null }[]),
+    (id) => cmap.get(id)?.owner_id,
+    ((wld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[]),
+    ((res ?? []) as { fixture_id: string; h90: number; a90: number }[]),
+  );
+  // Exclude the fixture being announced: a re-sent reminder must not report
+  // the match it is reminding you about as history.
+  const history = prev && prev.fixtureId !== f.id ? prev : null;
+  const samePair = history
+    ? new Set([history.homeClubId, history.awayClubId]).size === 2
+      && [history.homeClubId, history.awayClubId].every((c) => c === f.home_club_id || c === f.away_club_id)
+    : false;
+
   return buildFixtureNotice({
     kind,
     home: home?.name ?? f.home_club_id,
@@ -74,6 +92,15 @@ export async function fixtureNotice(
     ownerA: aName,
     ownerB: bName,
     h2h: sameOwner ? null : h2hText(aName, bName, tally),
+    lastMeeting: history
+      ? lastMeetingText(
+          history,
+          (id) => cmap.get(id)?.name ?? id,
+          (id) => bmap.get(id)?.name ?? id,
+          history.at ? dateFmt.format(new Date(history.at)) : null,
+          samePair,
+        )
+      : null,
     netA: sameOwner ? null : netA,
     netB: sameOwner ? null : netB,
     mins: mins ?? null,

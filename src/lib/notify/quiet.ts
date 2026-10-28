@@ -8,7 +8,12 @@ import { sendHtml } from '@/lib/notify/send';
 
 export const QUIET_START_MIN = 4 * 60 + 30; // 04:30 IST
 export const QUIET_END_MIN = 16 * 60 + 30; // 16:30 IST — daytime digest releases here
-export const GROUP_DAILY_CEILING = 6;
+// Six was set when the bot only announced fixtures and results. It is now the
+// binding constraint on everything else: a Saturday with two reminders, two
+// pre-match warnings, two results with standings, the nightly brief and the
+// Sunday roundup needs ten before anything gets held. Raised to match, not
+// removed — the ceiling is what stops a provider loop spamming the group.
+export const GROUP_DAILY_CEILING = 10;
 
 export function istMinutes(d: Date): number {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);

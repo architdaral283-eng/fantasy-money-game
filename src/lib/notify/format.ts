@@ -105,6 +105,7 @@ export interface FixtureNotice {
   ownerA: string;
   ownerB: string;
   h2h?: string | null;       // 'Anmol leads 3–1'
+  lastMeeting?: string | null; // 'Rematch: Arsenal 1–2 Real Madrid, Sat 24 Oct. Vedant took ₹500 off Archit.'
   netA?: number | null;
   netB?: number | null;
   mins?: number | null;      // prematch only
@@ -128,6 +129,7 @@ export function buildFixtureNotice(n: FixtureNotice): string {
 
   const context: string[] = [];
   if (n.h2h) context.push(`Head to head: ${esc(n.h2h)}`);
+  if (n.lastMeeting) context.push(esc(n.lastMeeting));
   if (typeof n.netA === 'number' && typeof n.netB === 'number') {
     context.push(standingLine(n.ownerA, n.netA, n.ownerB, n.netB));
   }
@@ -229,6 +231,59 @@ export function buildDigestText(
     ? block('ELSEWHERE', pre(general.map((g) => `${esc(g.headline)}\n   ${esc(g.context)}`).join('\n\n')))
     : null;
   return block(header, clubBlock, generalBlock);
+}
+
+// ——————————————————————————— the Sunday roundup ———————————————————————————
+
+export interface WeeklyInput {
+  weekLabel: string;
+  /** name, title, net, form string, points */
+  table: { name: string; title: string; net: number; form: string }[];
+  rivalry: { a: string; b: string; moved: number; leader: string | null } | null;
+  moment: { description: string; amount: number; from: string; to: string } | null;
+  unlucky: { name: string; narrow: number } | null;
+  exposed: { name: string; fixtures: number }[];
+  chase: { chaser: string; leader: string; wins: number } | null;
+  landmark: string | null;
+}
+
+/**
+ * One message a week carrying eight features: the form table, running titles,
+ * rivalry heat, the moment of the week, the unlucky table, who is exposed,
+ * title-race maths and season landmarks.
+ *
+ * It is one message on purpose. The group ceiling is six a day and eight
+ * separate posts would read as noise — a Sunday roundup reads as an event.
+ */
+export function buildWeeklyText(w: WeeklyInput): string {
+  const tableRows = w.table.map((r) => [`${r.name} — ${r.title}`, `${signed(r.net)}  ${r.form}`] as [string, string]);
+
+  const parts: string[] = [];
+  if (w.moment) {
+    parts.push(`Moment of the week: ${esc(w.moment.description)} — ${money(w.moment.amount)} off ${esc(w.moment.from)}.`);
+  }
+  if (w.rivalry && w.rivalry.moved > 0) {
+    const lead = w.rivalry.leader ? `${esc(w.rivalry.leader)} is ahead on it.` : 'Dead level.';
+    parts.push(`Hottest rivalry: ${esc(w.rivalry.a)} v ${esc(w.rivalry.b)}, ${money(w.rivalry.moved)} across the season. ${lead}`);
+  }
+  if (w.unlucky && w.unlucky.narrow > 1) {
+    parts.push(`${esc(w.unlucky.name)} has lost ${w.unlucky.narrow} by a single goal. He will mention it.`);
+  }
+  if (w.chase && w.chase.wins > 0) {
+    parts.push(`${esc(w.chase.chaser)} needs ${w.chase.wins} more wins than ${esc(w.chase.leader)} to catch him.`);
+  }
+  const exposed = w.exposed.filter((e) => e.fixtures > 0);
+  if (exposed.length) {
+    parts.push(`This week: ${exposed.map((e) => `${esc(e.name)} ${e.fixtures}`).join(' · ')}${
+      w.exposed.some((e) => e.fixtures === 0) ? `. ${esc(w.exposed.filter((e) => e.fixtures === 0).map((e) => e.name).join(' and '))} has nothing on.` : ''}`);
+  }
+
+  return block(
+    head('The week', w.weekLabel),
+    pre(esc(cols(tableRows))),
+    parts.join('\n\n'),
+    w.landmark ? esc(w.landmark) : null,
+  );
 }
 
 // ——————————————————————————— ledger ———————————————————————————
