@@ -1,19 +1,16 @@
 import { ImageResponse } from 'next/og';
 import { supabaseService } from '@/lib/db/supabase';
+import { standingsTree, standingsSize, type StandingsRow } from '@/lib/images/recap';
 
 export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
 
 /**
- * Standings table as a PNG photo for Telegram/WhatsApp.
+ * Standings table as a PNG photo for Telegram.
  *
- * SATORI RULE: every <div> here must have EXACTLY ONE child, or carry an
- * explicit `display: flex`. JSX turns `{a}W {b}L` into several children, which
- * made next/og log: Expected <div> to have explicit "display: flex".
- * Keep interpolated text as a single template string — and that means STRING:
- * a bare number child (`{i + 1}`) trips the same error in this Satori build.
- * That one survived the first fix, so the image rendered 0 bytes on every
- * request and the standings photo never reached the group.
+ * The picture itself lives in @/lib/images/recap so it can be rendered in a
+ * test — this image returned 0 bytes on every request for weeks because
+ * Satori rejects a bare number child, silently, and nothing checked.
  */
 export async function GET() {
   const db = supabaseService();
@@ -21,36 +18,16 @@ export async function GET() {
     db.from('player_balances').select('id,name,net_inr'),
     db.from('wld_records').select('player_id,outcome'),
   ]);
-  const rows = ((bal ?? []) as { id: string; name: string; net_inr: number }[])
+  const count = (id: string, o: string) =>
+    (wld ?? []).filter((x: { player_id: string; outcome: string }) => x.player_id === id && x.outcome === o).length;
+
+  const rows: StandingsRow[] = ((bal ?? []) as { id: string; name: string; net_inr: number }[])
     .sort((a, b) => Number(b.net_inr) - Number(a.net_inr))
     .map((r) => ({
-      ...r,
-      w: (wld ?? []).filter((x: { player_id: string; outcome: string }) => x.player_id === r.id && x.outcome === 'W').length,
-      l: (wld ?? []).filter((x: { player_id: string; outcome: string }) => x.player_id === r.id && x.outcome === 'L').length,
-      d: (wld ?? []).filter((x: { player_id: string; outcome: string }) => x.player_id === r.id && x.outcome === 'D').length,
+      id: r.id, name: r.name, net: Number(r.net_inr),
+      w: count(r.id, 'W'), l: count(r.id, 'L'), d: count(r.id, 'D'),
     }));
-  const total = rows.reduce((s, r) => s + Number(r.net_inr), 0);
+  const total = rows.reduce((s, r) => s + r.net, 0);
 
-  return new ImageResponse(
-    (
-      <div style={{ display: 'flex', flexDirection: 'column', width: 900, padding: 48, background: '#F1F4EF', fontFamily: 'Archivo, sans-serif', color: '#10281B' }}>
-        <div style={{ fontSize: 20, letterSpacing: 3, color: '#6B7A6E' }}>FANTASY FOOTBALL MONEY GAME 2026/27</div>
-        <div style={{ fontSize: 54, fontWeight: 800, margin: '8px 0 24px', letterSpacing: -1 }}>Standings</div>
-        {rows.map((r, i) => (
-          <div key={r.id} style={{ display: 'flex', fontSize: 32, padding: '14px 0', borderBottom: '2px solid #DCE2D8', background: i % 2 ? '#F1F4EF' : '#FFFFFF' }}>
-            <div style={{ width: 60 }}>{String(i + 1)}</div>
-            <div style={{ width: 300 }}>{r.name}</div>
-            <div style={{ width: 220, color: Number(r.net_inr) >= 0 ? '#10281B' : '#C8102E', fontWeight: 600 }}>
-              {`${Number(r.net_inr) >= 0 ? '+' : '−'}₹${Math.abs(Number(r.net_inr)).toLocaleString('en-IN')}`}
-            </div>
-            <div style={{ color: '#6B7A6E' }}>{`${r.w}W ${r.l}L ${r.d}D`}</div>
-          </div>
-        ))}
-        <div style={{ marginTop: 28, fontSize: 24, background: '#10281B', color: '#F1F4EF', padding: '12px 20px', alignSelf: 'flex-start' }}>
-          {`Zero-sum check: ₹${total} ${total === 0 ? 'passed' : 'FAILED. Ledger locked.'}`}
-        </div>
-      </div>
-    ),
-    { width: 900, height: 220 + rows.length * 70 + 180 },
-  );
+  return new ImageResponse(standingsTree(rows, total), standingsSize(rows.length));
 }

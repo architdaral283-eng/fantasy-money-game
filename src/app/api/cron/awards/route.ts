@@ -73,9 +73,26 @@ export async function POST(req: Request) {
     results: a.results,
   });
 
-  // urgent: a once-a-month message must not be held back by a busy day or
-  // released at 16:30 in a batch with yesterday's leftovers.
-  await sendGroup(db, text, { urgent: true });
+  // One message, not four: the recap image carries the awards, the month's
+  // swing and each player's form, with the written version as its caption.
+  // urgent, because a once-a-month message must not be held back by a busy
+  // day and released at 16:30 in a batch with yesterday's leftovers.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app';
+  let image = false;
+  try {
+    const r = await fetch(`${appUrl}/api/og/recap`, { cache: 'no-store' });
+    const png = await r.arrayBuffer();
+    // A Satori error produces a 0-byte PNG and no exception. That is how the
+    // standings photo was broken for weeks before anyone noticed, so the size
+    // is checked rather than trusted.
+    if (!r.ok || png.byteLength < 1000) throw new Error(`og/recap ${r.status}, ${png.byteLength} bytes`);
+    const { sendGroupPhoto } = await import('@/lib/notify/quiet');
+    await sendGroupPhoto(db, text, async () => png, { urgent: true });
+    image = true;
+  } catch {
+    // Text still goes out. A missing picture is a worse month, not a lost one.
+    await sendGroup(db, text, { urgent: true });
+  }
 
-  return NextResponse.json({ ok: true, month: bounds.label, moved: a.moved, results: a.results });
+  return NextResponse.json({ ok: true, month: bounds.label, moved: a.moved, results: a.results, image });
 }

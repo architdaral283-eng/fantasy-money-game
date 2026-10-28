@@ -39,6 +39,9 @@ export class TelegramAdapter implements NotificationChannel {
     const form = new FormData();
     form.append('chat_id', chatId);
     form.append('caption', caption.slice(0, 1024));
+    // Every other outbound message is HTML; a caption that is not renders
+    // &amp; and &#39; literally.
+    form.append('parse_mode', 'HTML');
     form.append('photo', new Blob([png], { type: 'image/png' }), 'standings.png');
     const res = await fetch(`https://api.telegram.org/bot${this.botToken}/sendPhoto`, {
       method: 'POST', body: form,
