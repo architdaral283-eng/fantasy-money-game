@@ -670,3 +670,53 @@ export function predictionLine(rows: PredictionStanding[]): string | null {
   const [top, ...rest] = played;
   return `Predictions: ${esc(top.name)} leads on ${top.points}, ${rest.map((r) => `${esc(r.name)} ${r.points}`).join(', ')}.`;
 }
+
+// ---------------------------------------------------------------------------
+// Achievements and the six head-to-head trophies.
+
+export interface BadgeLine { name: string; blurb: string; earned: boolean; detail?: string }
+
+/** Compact enough to ride at the bottom of /me. */
+export function buildBadges(rows: BadgeLine[]): string | null {
+  if (!rows.length) return null;
+  const got = rows.filter((r) => r.earned);
+  const missing = rows.filter((r) => !r.earned).map((r) => r.name);
+
+  if (!got.length) {
+    return block(head('Badges', `0 of ${rows.length}`), 'Nothing yet. Not even the bad ones.');
+  }
+
+  const body = got.map((r) => `${padR(r.name, 13)} ${r.detail ?? ''}`.trimEnd()).join('\n');
+  return block(
+    head('Badges', `${got.length} of ${rows.length}`),
+    pre(esc(body)),
+    missing.length ? `Still missing: ${esc(missing.join(', '))}.` : 'All of them. Including the ones nobody wants.',
+  );
+}
+
+export interface TrophyLine {
+  a: string;
+  b: string;
+  holder: string | null;
+  aWins: number;
+  bWins: number;
+  draws: number;
+  games: number;
+}
+
+/** The six pairings and who currently holds each. */
+export function buildRivalryTrophies(rows: TrophyLine[], you?: string | null): string {
+  const body = rows.map((r) => {
+    const score = r.games ? `${r.aWins}–${r.bWins}` : '—';
+    return `${padR(r.a, 8)} ${padR(score, 5)} ${padR(r.b, 8)}  ${r.holder ?? 'vacant'}`;
+  }).join('\n');
+
+  const mine = you ? rows.filter((r) => r.holder === you).length : null;
+  const tail = mine === null
+    ? 'Held until the other man goes ahead.'
+    : mine === 0
+      ? 'You hold none of them. Held until the other man goes ahead.'
+      : `You hold ${mine} of ${rows.length}. Held until the other man goes ahead.`;
+
+  return block(head('Head to head', `${rows.length} trophies`), pre(esc(body)), tail);
+}

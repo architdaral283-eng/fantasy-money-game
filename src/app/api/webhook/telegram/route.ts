@@ -9,7 +9,7 @@ import { parseCommand, parseOneLine } from '@/lib/parse/one-line';
 import { submitManualLine } from '@/lib/entry/submit';
 import { buildPinText, countdown } from '@/lib/notify/panel';
 import { commissionerHeaders, telegramWebhookAuthed } from '@/lib/auth/require-commissioner';
-import { buildHelp, buildRules, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, block, head, signed, money, pre, cols, esc, scorerLines } from '@/lib/notify/format';
+import { buildHelp, buildRules, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, buildBadges, buildRivalryTrophies, block, head, signed, money, pre, cols, esc, scorerLines } from '@/lib/notify/format';
 import { istClock, istDay } from '@/lib/notify/fixture-notice';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://fantasy-money-game.vercel.app';
@@ -355,15 +355,38 @@ export async function POST(req: Request) {
   }
   if (cmdline === '/me') {
     const pid = me.id;
-    const [{ data: b }, { data: w }, { data: mine }] = await Promise.all([
+    const [{ data: b }, { data: w }, { data: mine }, { data: allClubs }, { data: allFx }, { data: led }, { data: bal }] = await Promise.all([
       db.from('player_balances').select('*').eq('id', pid).single(),
-      db.from('wld_records').select('outcome').eq('player_id', pid),
+      db.from('wld_records').select('outcome,fixture_id,player_id,occurred_at').eq('player_id', pid),
       db.from('clubs').select('name,league').eq('owner_id', pid),
+      db.from('clubs').select('id,name,owner_id,draft_pick'),
+      db.from('fixtures').select('id,home_club_id,away_club_id'),
+      db.from('ledger_entries').select('from_player_id,to_player_id,amount_inr,created_at'),
+      db.from('player_balances').select('id,name'),
     ]);
     const net = Number((b as { net_inr?: number } | null)?.net_inr ?? 0);
-    const n = (o: string) => ((w ?? []) as { outcome: string }[]).filter((r) => r.outcome === o).length;
+    const rows = (w ?? []) as { outcome: 'W' | 'L' | 'D'; fixture_id: string | null; player_id: string; occurred_at: string }[];
+    const n = (o: string) => rows.filter((r) => r.outcome === o).length;
     const clubs = ((mine ?? []) as { name: string; league: string }[]).map((c) => `${c.name} (${c.league})`).join(', ');
-    await reply(block(head(me.name), `${signed(net)}  ·  ${n('W')}W ${n('L')}L ${n('D')}D`, `Clubs: ${clubs}`));
+
+    // Badges are derived, never awarded, and the embarrassing ones are the point.
+    const { badges } = await import('@/lib/stats/badges');
+    const pnames = new Map(((bal ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
+    const cabinet = buildBadges(badges({
+      player: pid,
+      wld: rows,
+      ledger: (led ?? []) as { from_player_id: string; to_player_id: string; amount_inr: number; created_at: string }[],
+      fixtures: (allFx ?? []) as { id: string; home_club_id: string; away_club_id: string }[],
+      clubs: (allClubs ?? []) as { id: string; name: string; owner_id: string; draft_pick: number }[],
+      nameOf: (id) => pnames.get(id) ?? id,
+    }));
+
+    await reply(block(
+      head(me.name),
+      `${signed(net)}  ·  ${n('W')}W ${n('L')}L ${n('D')}D`,
+      `Clubs: ${clubs}`,
+      cabinet,
+    ));
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/next' || cmdline === '/fixtures') {
@@ -414,6 +437,29 @@ export async function POST(req: Request) {
       status: t.status,
       eachOtherPays: Number(km.get(t.competition_id)?.trophy_each_other_pays ?? 0),
     }))));
+
+    // Six small rivalries alongside the one table. Held by whoever leads, and
+    // lost the moment the other man goes ahead.
+    const [{ data: hFx }, { data: hClubs }, { data: hWld }, { data: hBal }] = await Promise.all([
+      db.from('fixtures').select('id,home_club_id,away_club_id,status').eq('status', 'RECORDED'),
+      db.from('clubs').select('id,owner_id'),
+      db.from('wld_records').select('player_id,fixture_id,outcome'),
+      db.from('player_balances').select('id,name'),
+    ]);
+    const owners = new Map(((hClubs ?? []) as { id: string; owner_id: string }[]).map((c) => [c.id, c.owner_id]));
+    const pn = new Map(((hBal ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
+    const nm = (id: string) => pn.get(id) ?? id;
+    const { rivalryTrophies } = await import('@/lib/stats/rivalry-trophies');
+    const rivals = rivalryTrophies(
+      ['archit', 'vedant', 'harshal', 'anmol'],
+      (hFx ?? []) as { id: string; home_club_id: string; away_club_id: string; status: string }[],
+      (id) => owners.get(id),
+      (hWld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[],
+    );
+    await reply(buildRivalryTrophies(
+      rivals.map((r) => ({ ...r, a: nm(r.a), b: nm(r.b), holder: r.holder ? nm(r.holder) : null })),
+      nm(me.id),
+    ));
     return NextResponse.json({ ok: true });
   }
   if (cmdline === '/report') {
