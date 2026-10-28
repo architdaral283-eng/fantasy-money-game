@@ -50,18 +50,27 @@ export async function fanOutText(db: SupabaseClient, templateKey: string, text: 
  * template_key is deliberately not 'group', so these never count against it.
  * Returns false when that player has never linked a chat.
  */
-export async function sendPlayer(db: SupabaseClient, playerId: string, templateKey: string, text: string): Promise<boolean> {
-  const tg = telegram();
+export async function sendPlayer(
+  db: SupabaseClient,
+  playerId: string,
+  templateKey: string,
+  text: string,
+  keyboard?: { text: string; callback_data?: string; url?: string }[][],
+): Promise<boolean> {
   const { data } = await db.from('players').select('telegram_chat_id').eq('id', playerId).maybeSingle();
   const chatId = (data as { telegram_chat_id?: string } | null)?.telegram_chat_id;
-  if (!tg || !chatId) {
-    await log(db, playerId, 'telegram', templateKey, { text }, 'SKIPPED', undefined, !tg ? 'no bot token' : 'player not linked');
+  if (!chatId) {
+    await log(db, playerId, 'telegram', templateKey, { text }, 'SKIPPED', undefined, 'player not linked');
     return false;
   }
+  // sendHtml, NOT the adapter's send(): that one prefixes every message with
+  // "*template_key*" and sends it as Markdown. Every DM built on top of this
+  // uses the house HTML style, so <pre> would have rendered literally and an
+  // unbalanced underscore in a club name would have failed the send outright.
   try {
-    const r = await tg.send(chatId, templateKey, { text });
-    await log(db, playerId, 'telegram', templateKey, { text }, 'SENT', r.messageId);
-    return true;
+    const id = await sendHtml(chatId, text, keyboard);
+    await log(db, playerId, 'telegram', templateKey, { text }, id ? 'SENT' : 'FAILED', id ? String(id) : undefined, id ? undefined : 'sendMessage returned no id');
+    return id !== null;
   } catch (e) {
     await log(db, playerId, 'telegram', templateKey, { text }, 'FAILED', undefined, (e as Error).message);
     return false;

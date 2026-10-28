@@ -105,8 +105,13 @@ export async function POST(req: Request) {
     .join('\n\n');
 
   await sendGroup(db, full, { urgent: true });
+
+  // And each player gets their banker offer by DM. No group cost, one tap,
+  // and the week's fixtures are known by Sunday night.
+  const { offerBankers } = await import('@/lib/notify/banker');
+  const bankerOffers = await offerBankers(db).catch(() => 0);
   return NextResponse.json({
-    ok: true, players: table.length, rivalry: !!riv, moment: !!moment,
+    ok: true, bankerOffers, players: table.length, rivalry: !!riv, moment: !!moment,
     landmark: landmark(nowMs, playedPaying, totalPaying),
   });
 }

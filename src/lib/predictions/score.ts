@@ -10,8 +10,32 @@ export const HOME = 0;
 export const DRAW = 1;
 export const AWAY = 2;
 
-/** Points for calling it right. Flat for now; feature 39 doubles it on a banker. */
+/** Points for calling it right. */
 export const POINTS_CORRECT = 1;
+/** A banker doubles the reward and costs a point when it misses. */
+export const POINTS_BANKER_CORRECT = 2;
+export const POINTS_BANKER_WRONG = -1;
+
+export function pointsFor(correct: boolean, banker: boolean): number {
+  if (banker) return correct ? POINTS_BANKER_CORRECT : POINTS_BANKER_WRONG;
+  return correct ? POINTS_CORRECT : 0;
+}
+
+const IST_OFFSET = 5.5 * 3600 * 1000;
+
+/**
+ * The Monday that starts the IST week containing `ms`, as YYYY-MM-DD.
+ *
+ * One banker a week, and "the week" has to mean the same thing to the DM that
+ * offers it, the callback that records it and the settlement that scores it.
+ */
+export function weekStartIST(ms: number): string {
+  const ist = new Date(ms + IST_OFFSET);
+  const dow = ist.getUTCDay();             // 0 Sunday … 6 Saturday
+  const backToMonday = (dow + 6) % 7;      // Monday -> 0, Sunday -> 6
+  const monday = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - backToMonday));
+  return monday.toISOString().slice(0, 10);
+}
 
 export function outcomeOf(h: number, a: number): Outcome {
   return h > a ? 'H' : a > h ? 'A' : 'D';
@@ -22,7 +46,7 @@ export function choiceToOutcome(choice: number): Outcome | null {
 }
 
 export interface Vote { player_id: string; choice: number; answered_at: string }
-export interface Scored { player: string; choice: number; correct: boolean; points: number }
+export interface Scored { player: string; choice: number; correct: boolean; points: number; banker: boolean }
 
 /**
  * Settle one poll.
@@ -31,7 +55,12 @@ export interface Scored { player: string; choice: number; correct: boolean; poin
  * 30 minutes before kickoff, but a missed poller tick would otherwise leave it
  * open through the match — and a vote in the 89th minute is not a prediction.
  */
-export function scorePoll(votes: Vote[], actual: Outcome, kickoffMs: number): Scored[] {
+export function scorePoll(
+  votes: Vote[],
+  actual: Outcome,
+  kickoffMs: number,
+  bankers: ReadonlySet<string> = new Set(),
+): Scored[] {
   const out: Scored[] = [];
   for (const v of votes) {
     const at = Date.parse(v.answered_at);
@@ -39,7 +68,8 @@ export function scorePoll(votes: Vote[], actual: Outcome, kickoffMs: number): Sc
     const called = choiceToOutcome(v.choice);
     if (called === null) continue;
     const correct = called === actual;
-    out.push({ player: v.player_id, choice: v.choice, correct, points: correct ? POINTS_CORRECT : 0 });
+    const banker = bankers.has(v.player_id);
+    out.push({ player: v.player_id, choice: v.choice, correct, points: pointsFor(correct, banker), banker });
   }
   return out;
 }

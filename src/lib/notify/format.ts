@@ -767,6 +767,25 @@ export function buildTeamNews(n: TeamNews): string {
 }
 
 // ---------------------------------------------------------------------------
+// Banker picks. One a week, double or minus one.
+
+export interface BankerOption { id: string; label: string; when: string }
+
+export function buildBankerOffer(rows: BankerOption[], current: string | null): string {
+  if (!rows.length) {
+    return block(head('Banker'), 'Nothing to bank this week. Nobody plays anybody.');
+  }
+  const body = rows.map((r) => ` ${padR(r.when, 17)} ${r.label}`).join('\n');
+  return block(
+    head('Banker', 'this week'),
+    'One fixture. Call it right and it is worth two points instead of one; call it wrong and it costs you one.',
+    pre(esc(body)),
+    current ? `Currently on ${esc(current)}.` : 'Nothing picked yet.',
+    'Tap one below. You can change it until it kicks off.',
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The club form side-table. A second leaderboard, for whoever is losing the
 // first one.
 

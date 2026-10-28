@@ -159,6 +159,15 @@ export async function POST(req: Request) {
     const me = await playerByTg(db, cq.from?.id);
     if (me) await markInbound(db, me.id);
 
+    // banker:<fixtureId> — one nomination a week, changeable until kickoff
+    if (kind === 'banker') {
+      if (!me) { await finish('Link your chat to the bot first.', true); return NextResponse.json({ ok: true }); }
+      const { recordBanker } = await import('@/lib/notify/banker');
+      const r = await recordBanker(db, me.id, arg);
+      await finish(r.message, !r.ok);
+      return NextResponse.json({ ok: true, banker: r.ok });
+    }
+
     // correction confirm: correct:<fixtureId>:<homeGoals>:<awayGoals>, Archit only
     if (kind === 'correct') {
       if (!me || me.role !== 'COMMISSIONER') {
