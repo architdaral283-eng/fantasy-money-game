@@ -11,7 +11,9 @@
 import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { sendGroup } from '@/lib/notify/quiet';
-import { buildDigestText, type DigestClubItem } from '@/lib/notify/format';
+import { buildDigestText, buildSilenceLine, type DigestClubItem } from '@/lib/notify/format';
+import { silentPlayers } from '@/lib/stats/silence';
+import { PLAYERS } from '@/lib/stats/weekly';
 import { istDay } from '@/lib/notify/fixture-notice';
 import { NEWS_LEAGUES, parseNews, selectDigest, type NewsItem } from '@/lib/news/espn-news';
 
@@ -59,10 +61,11 @@ export async function POST(req: Request) {
 
   const [{ data: clubs }, { data: bal }] = await Promise.all([
     db.from('clubs').select('id,name,owner_id'),
-    db.from('player_balances').select('id,name'),
+    db.from('player_balances').select('id,name,net_inr'),
   ]);
   const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
-  const pmap = new Map(((bal ?? []) as { id: string; name: string }[]).map((b) => [b.id, b.name]));
+  const bals = (bal ?? []) as { id: string; name: string; net_inr: number }[];
+  const pmap = new Map(bals.map((b) => [b.id, b.name]));
 
   const ours: DigestClubItem[] = picked.ours.map((it) => ({
     club: cmap.get(it.clubIds[0])?.name ?? it.clubIds[0],
@@ -71,12 +74,30 @@ export async function POST(req: Request) {
   }));
 
   const general = picked.general.map((g) => ({ headline: g.headline, context: g.description }));
-  const text = buildDigestText(istDay(new Date(nowMs).toISOString()), ours, general);
+  // Whoever has stopped talking gets named here rather than in a message of
+  // their own. markInbound() already stamps config on every inbound message,
+  // so this is a read of something we already had, not new tracking.
+  const { data: inbound } = await db.from('config').select('key,value').like('key', 'last_inbound_%');
+  const lastInbound: Record<string, string | null> = {};
+  for (const r of (inbound ?? []) as { key: string; value: { at?: string } | null }[]) {
+    lastInbound[r.key.replace('last_inbound_', '')] = r.value?.at ?? null;
+  }
+  const silence = buildSilenceLine(
+    silentPlayers(lastInbound, PLAYERS, nowMs).map((s) => ({
+      name: pmap.get(s.player) ?? s.player,
+      days: s.days,
+      net: Number(bals.find((b) => b.id === s.player)?.net_inr ?? 0),
+    })),
+  );
+
+  const text = [buildDigestText(istDay(new Date(nowMs).toISOString()), ours, general), silence]
+    .filter((x): x is string => typeof x === 'string' && x !== '')
+    .join('\n\n');
   await sendGroup(db, text, { urgent: true });
 
   // Remember what went out, newest first, capped.
   const nextSeen = [...picked.ids, ...seenIds].slice(0, SEEN_CAP);
   await db.from('config').upsert({ key: SEEN_KEY, value: { ids: nextSeen } }, { onConflict: 'key' });
 
-  return NextResponse.json({ ok: true, scanned: items.length, ours: ours.length, general: general.length, errors });
+  return NextResponse.json({ ok: true, scanned: items.length, ours: ours.length, general: general.length, silence: silence !== null, errors });
 }

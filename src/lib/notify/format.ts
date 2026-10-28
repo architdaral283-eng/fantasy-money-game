@@ -493,3 +493,77 @@ export function buildNearMiss(n: NearMissNote): string {
     `${body} ${verdict}`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Silence, and the month in review.
+
+export interface SilenceRow { name: string; days: number | null; net: number }
+
+/**
+ * One line naming whoever has stopped talking. Rides on the nightly brief
+ * rather than taking a message of its own — the point is to be noticed, not
+ * to add to the noise.
+ */
+export function buildSilenceLine(rows: SilenceRow[]): string | null {
+  if (!rows.length) return null;
+  const names = rows.map((r) => esc(r.name));
+  const list = names.length === 1
+    ? names[0]
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+  if (rows.length === 1) {
+    const r = rows[0];
+    if (r.days === null) return `${list} has not said one word in here all season.`;
+    const v = [
+      `Nobody has heard from ${list} in ${r.days} days. ${signed(r.net)} will do that to a man.`,
+      `${r.days} days without a word from ${list}. The ledger is louder than he is.`,
+      `${list} has gone ${r.days} days silent, sitting on ${signed(r.net)} with nothing to add.`,
+    ];
+    return v[r.days % v.length];
+  }
+
+  const worst = rows[0].days;
+  if (worst === null) return `${list} have not said one word in here all season.`;
+  const v = [
+    `Silence from ${list}. ${worst} days at the longest.`,
+    `${list} have all gone quiet, the longest run ${worst} days and counting.`,
+    `Not a word from ${list}. ${worst} days at the worst of it.`,
+  ];
+  return v[worst % v.length];
+}
+
+export interface MonthlyLine { name: string; amount: number }
+export interface MonthlyBrief {
+  label: string;                       // 'October 2026'
+  owner: MonthlyLine | null;
+  flop: MonthlyLine | null;
+  club: (MonthlyLine & { owner: string }) | null;
+  worstClub: (MonthlyLine & { owner: string }) | null;
+  biggest: { description: string; amount: number; from: string; to: string } | null;
+  moved: number;
+  results: number;
+}
+
+/** The 1st-of-the-month message. Awards only — the table lives in the pin. */
+export function buildMonthlyAwards(m: MonthlyBrief): string {
+  if (m.results === 0 && m.moved === 0) {
+    return block(head('The month', m.label), 'Nothing moved. Nobody won anything. A month of pure talk.');
+  }
+  const people = [
+    m.owner ? `Owner of the month: ${esc(m.owner.name)}, ${signed(m.owner.amount)}` : null,
+    m.flop ? `Flop of the month: ${esc(m.flop.name)}, ${signed(m.flop.amount)}` : null,
+  ].filter(Boolean).join('\n');
+
+  const clubs = [
+    m.club ? `Club of the month: ${esc(m.club.name)} — ${esc(m.club.owner)}, ${signed(m.club.amount)}` : null,
+    m.worstClub ? `Worst club: ${esc(m.worstClub.name)} — ${esc(m.worstClub.owner)}, ${signed(m.worstClub.amount)}` : null,
+  ].filter(Boolean).join('\n');
+
+  const big = m.biggest
+    ? `Biggest single result: ${esc(m.biggest.description)}. ${money(m.biggest.amount)}, ${esc(m.biggest.from)} to ${esc(m.biggest.to)}.`
+    : null;
+
+  const tally = `${money(m.moved)} moved across ${m.results} result${m.results === 1 ? '' : 's'}.`;
+
+  return block(head('The month', m.label), people, clubs, big, tally);
+}
