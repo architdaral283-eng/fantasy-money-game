@@ -55,7 +55,26 @@ function ctxComp(ctx: RoastContext): string {
 }
 
 function bindingOk(t: RoastTemplate, ctx: RoastContext): boolean {
-  if (t.club_id && t.club_id !== ctx.loserClubId && t.club_id !== ctx.winnerClubId) return false;
+  if (t.club_id) {
+    // A club line is written from ONE side, and `target` says which. A LOSER
+    // line reads "this club is a disgrace and {loser} drafted it", so firing
+    // it when that club WON mocks the winning team and bills the wrong man:
+    // Arsenal beating Real Madrid would print "Vedant used a first-round pick
+    // on Arsenal" at the one player who does not own Arsenal.
+    //
+    // The column has existed since the first library and was never read —
+    // club_id matched EITHER side, so roughly half of all club lines named
+    // the wrong person. Every line in 0022 and 0030 is LOSER-targeted.
+    const side = t.target === 'LOSER' ? ctx.loserClubId
+      : t.target === 'WINNER' ? ctx.winnerClubId
+        : null;
+    if (side !== null) {
+      if (t.club_id !== side) return false;
+    } else if (t.club_id !== ctx.loserClubId && t.club_id !== ctx.winnerClubId) {
+      // BOTH / NEUTRAL: it reads from either side, so either club will do.
+      return false;
+    }
+  }
   if (t.derby_id && t.derby_id !== ctx.derbyId) return false;
   return true;
 }

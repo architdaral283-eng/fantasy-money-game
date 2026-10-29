@@ -27,6 +27,39 @@ describe('roast selection', () => {
     expect(pick?.id).toBe(1);
   });
 
+  it('a LOSER club line never fires on the club that WON', () => {
+    // ctx: Real Madrid (Vedant) lost to Real Betis (Harshal).
+    // A Betis line is about the winning club and names {loser} as its owner,
+    // which is Vedant, who owns Real Madrid. It must not be eligible at all.
+    const betis = T({ id: 20, scope: 'CLUB', club_id: 'real-betis', target: 'LOSER' });
+    expect(pickTemplate([betis], ctx, Date.now(), () => 0.5)).toBeNull();
+  });
+
+  it('a LOSER club line does fire on the club that lost', () => {
+    const madrid = T({ id: 21, scope: 'CLUB', club_id: 'real-madrid', target: 'LOSER' });
+    expect(pickTemplate([madrid], ctx, Date.now(), () => 0.5)?.id).toBe(21);
+  });
+
+  it('a WINNER club line is the mirror image', () => {
+    const onWinner = T({ id: 22, scope: 'CLUB', club_id: 'real-betis', target: 'WINNER' });
+    const onLoser = T({ id: 23, scope: 'CLUB', club_id: 'real-madrid', target: 'WINNER' });
+    expect(pickTemplate([onWinner], ctx, Date.now(), () => 0.5)?.id).toBe(22);
+    expect(pickTemplate([onLoser], ctx, Date.now(), () => 0.5)).toBeNull();
+  });
+
+  it('a BOTH club line still takes either side', () => {
+    const a = T({ id: 24, scope: 'CLUB', club_id: 'real-madrid', target: 'BOTH' });
+    const b = T({ id: 25, scope: 'CLUB', club_id: 'real-betis', target: 'BOTH' });
+    expect(pickTemplate([a], ctx, Date.now(), () => 0.5)?.id).toBe(24);
+    expect(pickTemplate([b], ctx, Date.now(), () => 0.5)?.id).toBe(25);
+  });
+
+  it('derby lines are unaffected: they name both men and bind on the tie', () => {
+    const d = T({ id: 26, scope: 'DERBY', derby_id: 'el-clasico', club_id: null, target: 'LOSER' });
+    expect(pickTemplate([d], { ...ctx, derbyId: 'el-clasico' }, Date.now(), () => 0.5)?.id).toBe(26);
+    expect(pickTemplate([d], { ...ctx, derbyId: null }, Date.now(), () => 0.5)).toBeNull();
+  });
+
   it('the hardest lines now fire on an ordinary one-goal win', () => {
     // Severity 3 used to need margin>=3, a derby or an upset, so a third of
     // the library almost never played and the group got arithmetic instead.
