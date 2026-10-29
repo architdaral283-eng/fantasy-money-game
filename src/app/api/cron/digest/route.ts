@@ -30,15 +30,22 @@ const BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 const SEEN_KEY = 'digest_seen_ids';
 const SEEN_CAP = 400;
 
-async function leagueNews(lg: string, nowMs: number, timeoutMs = 8000): Promise<NewsItem[]> {
+/**
+ * Raw feed, parsed later — because it may need parsing TWICE against
+ * different windows. On 29 Oct the brief came out as a single headline: a
+ * Thursday with no football, a strict 24-hour window, and the four stories
+ * already used the night before. Nothing was broken; there was simply
+ * nothing inside the window it was allowed to look at.
+ */
+async function leagueJson(lg: string, timeoutMs = 8000): Promise<unknown> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const r = await fetch(`${BASE}/${lg}/news?limit=25`, { signal: ctl.signal, cache: 'no-store' });
-    if (!r.ok) return [];
-    return parseNews(await r.json(), nowMs);
+    if (!r.ok) return null;
+    return await r.json();
   } catch {
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -54,11 +61,30 @@ export async function POST(req: Request) {
   const { data: seenCfg } = await db.from('config').select('value').eq('key', SEEN_KEY).maybeSingle();
   const seenIds: string[] = ((seenCfg?.value as { ids?: string[] } | null)?.ids ?? []).filter((x) => typeof x === 'string');
 
-  const feeds = await Promise.all(NEWS_LEAGUES.map((lg) => leagueNews(lg, nowMs)));
-  const items = feeds.flat();
-  if (!items.length) errors.push('espn news: every league returned nothing');
+  const feeds = await Promise.all(NEWS_LEAGUES.map((lg) => leagueJson(lg)));
+  if (feeds.every((f) => f === null)) errors.push('espn news: every league returned nothing');
 
-  const picked = selectDigest(items, { seenIds });
+  const parseAll = (hours: number): NewsItem[] =>
+    feeds.flatMap((j) => (j === null ? [] : parseNews(j, nowMs, hours)));
+
+  // Today first. A quiet day is the normal case between fixtures, and that is
+  // exactly when this message matters most — one headline is a worse answer
+  // than a story from yesterday the group has not been shown yet. Widening
+  // cannot repeat anything: seenIds still excludes everything already used.
+  let windowHours = 24;
+  let items = parseAll(windowHours);
+  let picked = selectDigest(items, { seenIds });
+  if (picked.ours.length < 3) {
+    for (const hours of [48, 72]) {
+      const wider = selectDigest(parseAll(hours), { seenIds });
+      if (wider.ours.length > picked.ours.length) {
+        picked = wider;
+        items = parseAll(hours);
+        windowHours = hours;
+      }
+      if (picked.ours.length >= 3) break;
+    }
+  }
 
   const [{ data: clubs }, { data: bal }] = await Promise.all([
     db.from('clubs').select('id,name,owner_id'),
@@ -108,7 +134,7 @@ export async function POST(req: Request) {
   if (new URL(req.url).searchParams.get('dry') === '1') {
     return NextResponse.json({
       ok: true, dry: true, text,
-      scanned: items.length, ours: ours.length, general: general.length,
+      scanned: items.length, windowHours, ours: ours.length, general: general.length,
       silence: { watchingSince: (chatter?.value as { first_at?: string } | null)?.first_at ?? null, line: silence },
       errors,
     });
@@ -120,5 +146,5 @@ export async function POST(req: Request) {
   const nextSeen = [...picked.ids, ...seenIds].slice(0, SEEN_CAP);
   await db.from('config').upsert({ key: SEEN_KEY, value: { ids: nextSeen } }, { onConflict: 'key' });
 
-  return NextResponse.json({ ok: true, scanned: items.length, ours: ours.length, general: general.length, silence: silence !== null, errors });
+  return NextResponse.json({ ok: true, scanned: items.length, windowHours, ours: ours.length, general: general.length, silence: silence !== null, errors });
 }

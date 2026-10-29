@@ -237,3 +237,41 @@ describe('the brief itself', () => {
     expect(t).toContain('Inter &amp; &lt;Lautaro&gt; stay');
   });
 });
+
+describe('a quiet day', () => {
+  // 29 Oct 2026 produced a one-headline brief: a Thursday with no football,
+  // a 24-hour window, and the four best stories already used the night
+  // before. The picker was working; it had nothing to pick from.
+  const art = (id: string, headline: string, hoursAgo: number, teamId: number) => ({
+    id, headline, type: 'Story',
+    description: 'Something happened and here is the detail of it, at length.',
+    published: new Date(Date.parse('2026-10-29T17:30:00Z') - hoursAgo * 3600 * 1000).toISOString(),
+    categories: [{ type: 'team', teamId }],
+  });
+  const NOW = Date.parse('2026-10-29T17:30:00Z');
+  // 359 Arsenal, 382 Man City, 360 Man Utd, 362 Villa
+  const feed = {
+    articles: [
+      art('a', 'Arsenal sign a goalkeeper', 6, 359),
+      art('b', 'Manchester City sack their manager', 30, 382),
+      art('c', 'Manchester United injury latest on Bruno Fernandes', 40, 360),
+      art('d', 'Aston Villa complete transfer of a defender', 60, 362),
+    ],
+  };
+
+  it('sees only today inside a 24-hour window', () => {
+    expect(parseNews(feed, NOW, 24).map((i) => i.id)).toEqual(['a']);
+  });
+
+  it('reaches back far enough to fill the brief when the day is empty', () => {
+    expect(parseNews(feed, NOW, 48).map((i) => i.id).sort()).toEqual(['a', 'b', 'c']);
+    expect(parseNews(feed, NOW, 72).map((i) => i.id).sort()).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('never reaches back so far that it repeats what was already shown', () => {
+    const wide = parseNews(feed, NOW, 72);
+    const picked = selectDigest(wide, { seenIds: ['a', 'b'] });
+    expect(picked.ids).not.toContain('a');
+    expect(picked.ids).not.toContain('b');
+  });
+});
