@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { INK, PAPER, MUTED } from '@/lib/images/recap';
+import { INK, PAPER } from '@/lib/images/recap';
 
 /**
  * Both teams on a pitch, in their actual shape, posted to the group with the
@@ -101,9 +101,9 @@ function header(s: LineupSide, flip: boolean): ReactElement {
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', width: '100%', padding: flip ? '9px 2px 0' : '0 2px 9px' }}>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: -0.3 }}>{s.club}</div>
-        <div style={{ display: 'flex', fontSize: 16, color: MUTED, marginTop: 1 }}>{s.owner}</div>
+        <div style={{ display: 'flex', fontSize: 17, color: INK, fontWeight: 600, marginTop: 1 }}>{s.owner}</div>
       </div>
-      <div style={{ display: 'flex', fontSize: 18, color: MUTED, letterSpacing: 1.5 }}>{s.formation ?? ''}</div>
+      <div style={{ display: 'flex', fontSize: 18, color: INK, fontWeight: 700, letterSpacing: 1.5 }}>{s.formation ?? ''}</div>
     </div>
   );
 }
@@ -117,7 +117,7 @@ export function lineupTree(c: LineupCard): ReactElement {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: 820, height: 1060, padding: '22px 26px', background: PAPER, fontFamily: 'Archivo, sans-serif', color: INK }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, letterSpacing: 2.5, color: MUTED, marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, letterSpacing: 2.5, color: INK, fontWeight: 600, marginBottom: 12 }}>
         <div style={{ display: 'flex' }}>{(c.derby ?? c.competition).toUpperCase()}</div>
         <div style={{ display: 'flex' }}>{`KICKOFF ${c.kickoffIST} IST`}</div>
       </div>
@@ -152,7 +152,7 @@ export function lineupTree(c: LineupCard): ReactElement {
         ) : null}
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 17 }}>
           <div style={{ display: 'flex', background: INK, color: PAPER, padding: '7px 13px', fontWeight: 600 }}>{c.stake}</div>
-          <div style={{ display: 'flex', color: MUTED, paddingTop: 7 }}>{c.h2h ?? ''}</div>
+          <div style={{ display: 'flex', color: INK, fontWeight: 600, paddingTop: 7 }}>{c.h2h ?? ''}</div>
         </div>
       </div>
     </div>
