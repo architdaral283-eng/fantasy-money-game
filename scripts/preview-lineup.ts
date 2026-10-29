@@ -28,8 +28,10 @@ const card: LineupCard = {
 
 (async () => {
   const out = process.argv[2] ?? 'lineup-preview.png';
-  const buf = await new ImageResponse(lineupTree(card), lineupSize()).arrayBuffer();
-  if (buf.byteLength < 1000) throw new Error(`Satori returned ${buf.byteLength} bytes — the tree is malformed`);
-  writeFileSync(out, Buffer.from(buf));
-  console.log(`${out}  ${buf.byteLength} bytes`);
+  const raw = await new ImageResponse(lineupTree(card), lineupSize()).arrayBuffer();
+  if (raw.byteLength < 1000) throw new Error(`Satori returned ${raw.byteLength} bytes — the tree is malformed`);
+  const { optimisePng } = await import('../src/lib/images/optimise');
+  const small = await optimisePng(Buffer.from(raw));
+  writeFileSync(out, small);
+  console.log(`${out}  ${raw.byteLength} -> ${small.byteLength} bytes  (${Math.round((1 - small.byteLength / raw.byteLength) * 100)}% smaller)`);
 })();

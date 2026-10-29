@@ -8,12 +8,16 @@ import { sendHtml } from '@/lib/notify/send';
 
 export const QUIET_START_MIN = 4 * 60 + 30; // 04:30 IST
 export const QUIET_END_MIN = 16 * 60 + 30; // 16:30 IST — daytime digest releases here
-// Six was set when the bot only announced fixtures and results. It is now the
-// binding constraint on everything else: a Saturday with two reminders, two
-// pre-match warnings, two results with standings, the nightly brief and the
-// Sunday roundup needs ten before anything gets held. Raised to match, not
-// removed — the ceiling is what stops a provider loop spamming the group.
-export const GROUP_DAILY_CEILING = 10;
+// Six was set when the bot only announced fixtures and results, then ten once
+// the roundup, the brief and the polls existed. Lineup cards push a busy
+// night past that again: 4 Nov has two counted UCL fixtures AND the reminders
+// and polls for 5 Nov, which is thirteen before anything is held.
+//
+// Twenty is deliberately generous. This number was never meant to ration
+// good messages — it exists so a provider loop or a retry storm cannot empty
+// itself into the group. Quiet hours still hold non-urgent traffic to 16:30,
+// and anything over the ceiling queues rather than being dropped.
+export const GROUP_DAILY_CEILING = 20;
 
 export function istMinutes(d: Date): number {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);

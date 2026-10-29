@@ -39,7 +39,7 @@ export interface LineupCard {
 }
 
 export function lineupSize(): { width: number; height: number } {
-  return { width: 900, height: 1180 };
+  return { width: 820, height: 1060 };
 }
 
 /**
@@ -59,10 +59,14 @@ export function outfieldRows(formation: string | null, outfield: number): number
 }
 
 function playerDot(name: string, shirt: string, key: string): ReactElement {
+  // Caps and heavy weight: these are read on a phone, at a glance, against
+  // turf. Sentence case at this size disappears into the background.
   return (
-    <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 150 }}>
-      <div style={{ display: 'flex', width: 26, height: 26, borderRadius: 13, background: shirt, border: '2px solid rgba(0,0,0,0.25)' }} />
-      <div style={{ display: 'flex', fontSize: 19, color: '#FFFFFF', marginTop: 6, fontWeight: 600 }}>{name}</div>
+    <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 168 }}>
+      <div style={{ display: 'flex', width: 22, height: 22, borderRadius: 11, background: shirt, border: '2px solid rgba(0,0,0,0.3)' }} />
+      <div style={{ display: 'flex', fontSize: 17, color: '#FFFFFF', marginTop: 5, fontWeight: 700, letterSpacing: 0.6 }}>
+        {name.toUpperCase()}
+      </div>
     </div>
   );
 }
@@ -75,7 +79,7 @@ function teamRows(s: LineupSide, shirt: string, idPrefix: string): ReactElement[
   const rows = outfieldRows(s.formation, outfield.length);
 
   const out: ReactElement[] = [
-    <div key={`${idPrefix}-gk`} style={{ display: 'flex', justifyContent: 'center', width: '100%', padding: '10px 0' }}>
+    <div key={`${idPrefix}-gk`} style={{ display: 'flex', justifyContent: 'center', width: '100%', padding: '7px 0' }}>
       {playerDot(keeper, shirt, `${idPrefix}-gk-p`)}
     </div>,
   ];
@@ -84,7 +88,7 @@ function teamRows(s: LineupSide, shirt: string, idPrefix: string): ReactElement[
     const band = outfield.slice(i, i + n);
     i += n;
     out.push(
-      <div key={`${idPrefix}-r${String(r)}`} style={{ display: 'flex', justifyContent: 'space-around', width: '100%', padding: '10px 0' }}>
+      <div key={`${idPrefix}-r${String(r)}`} style={{ display: 'flex', justifyContent: 'space-around', width: '100%', padding: '7px 0' }}>
         {band.map((p, c) => playerDot(p, shirt, `${idPrefix}-r${String(r)}-c${String(c)}`))}
       </div>,
     );
@@ -94,12 +98,12 @@ function teamRows(s: LineupSide, shirt: string, idPrefix: string): ReactElement[
 
 function header(s: LineupSide, flip: boolean): ReactElement {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', width: '100%', padding: flip ? '10px 4px 0' : '0 4px 10px' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', width: '100%', padding: flip ? '9px 2px 0' : '0 2px 9px' }}>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: -0.4 }}>{s.club}</div>
-        <div style={{ display: 'flex', fontSize: 18, color: MUTED, marginTop: 1 }}>{s.owner}</div>
+        <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: -0.3 }}>{s.club}</div>
+        <div style={{ display: 'flex', fontSize: 16, color: MUTED, marginTop: 1 }}>{s.owner}</div>
       </div>
-      <div style={{ display: 'flex', fontSize: 20, color: MUTED, letterSpacing: 1 }}>{s.formation ?? ''}</div>
+      <div style={{ display: 'flex', fontSize: 18, color: MUTED, letterSpacing: 1.5 }}>{s.formation ?? ''}</div>
     </div>
   );
 }
@@ -112,43 +116,43 @@ export function lineupTree(c: LineupCard): ReactElement {
   const missing = [c.away.missing, c.home.missing].filter(Boolean) as string[];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: 900, height: 1180, padding: '26px 30px', background: PAPER, fontFamily: 'Archivo, sans-serif', color: INK }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, letterSpacing: 2.5, color: MUTED, marginBottom: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: 820, height: 1060, padding: '22px 26px', background: PAPER, fontFamily: 'Archivo, sans-serif', color: INK }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, letterSpacing: 2.5, color: MUTED, marginBottom: 12 }}>
         <div style={{ display: 'flex' }}>{(c.derby ?? c.competition).toUpperCase()}</div>
         <div style={{ display: 'flex' }}>{`KICKOFF ${c.kickoffIST} IST`}</div>
       </div>
 
       {header(c.away, false)}
 
-      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: 820, background: TURF, border: `3px solid ${CHALK}`, position: 'relative' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: 766, background: TURF, border: `3px solid ${CHALK}`, position: 'relative' }}>
         {/* Markings first so the players paint over them. Absolutely
             positioned, so they take no part in the row layout below. */}
-        <div style={{ display: 'flex', position: 'absolute', top: 0, left: 262, width: 310, height: 96, border: `2px solid ${CHALK}`, borderTop: '0px solid transparent' }} />
-        <div style={{ display: 'flex', position: 'absolute', top: 0, left: 352, width: 130, height: 38, border: `2px solid ${CHALK}`, borderTop: '0px solid transparent' }} />
-        <div style={{ display: 'flex', position: 'absolute', bottom: 0, left: 262, width: 310, height: 96, border: `2px solid ${CHALK}`, borderBottom: '0px solid transparent' }} />
-        <div style={{ display: 'flex', position: 'absolute', bottom: 0, left: 352, width: 130, height: 38, border: `2px solid ${CHALK}`, borderBottom: '0px solid transparent' }} />
-        <div style={{ display: 'flex', position: 'absolute', top: 365, left: 375, width: 84, height: 84, borderRadius: 42, border: `2px solid ${CHALK}` }} />
+        <div style={{ display: 'flex', position: 'absolute', top: 0, left: 222, width: 320, height: 84, border: `2px solid ${CHALK}`, borderTop: '0px solid transparent' }} />
+        <div style={{ display: 'flex', position: 'absolute', top: 0, left: 312, width: 140, height: 34, border: `2px solid ${CHALK}`, borderTop: '0px solid transparent' }} />
+        <div style={{ display: 'flex', position: 'absolute', bottom: 0, left: 222, width: 320, height: 84, border: `2px solid ${CHALK}`, borderBottom: '0px solid transparent' }} />
+        <div style={{ display: 'flex', position: 'absolute', bottom: 0, left: 312, width: 140, height: 34, border: `2px solid ${CHALK}`, borderBottom: '0px solid transparent' }} />
+        <div style={{ display: 'flex', position: 'absolute', top: 341, left: 341, width: 82, height: 82, borderRadius: 41, border: `2px solid ${CHALK}` }} />
 
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-around', width: '100%', height: 406 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-around', width: '100%', height: 380 }}>
           {awayDown}
         </div>
         <div style={{ display: 'flex', width: '100%', height: 2, background: CHALK }} />
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-around', width: '100%', height: 406 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-around', width: '100%', height: 380 }}>
           {homeUp}
         </div>
       </div>
 
       {header(c.home, true)}
 
-      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto', paddingTop: 12 }}>
         {missing.length ? (
-          <div style={{ display: 'flex', fontSize: 18, color: '#C8102E', fontWeight: 600, marginBottom: 8 }}>
+          <div style={{ display: 'flex', fontSize: 16, color: '#C8102E', fontWeight: 700, marginBottom: 7, letterSpacing: 0.3 }}>
             {`${missing.join(' and ')} not in the XI`}
           </div>
         ) : null}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 19 }}>
-          <div style={{ display: 'flex', background: INK, color: PAPER, padding: '8px 14px' }}>{c.stake}</div>
-          <div style={{ display: 'flex', color: MUTED, paddingTop: 8 }}>{c.h2h ?? ''}</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 17 }}>
+          <div style={{ display: 'flex', background: INK, color: PAPER, padding: '7px 13px', fontWeight: 600 }}>{c.stake}</div>
+          <div style={{ display: 'flex', color: MUTED, paddingTop: 7 }}>{c.h2h ?? ''}</div>
         </div>
       </div>
     </div>
