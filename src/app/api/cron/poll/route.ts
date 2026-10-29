@@ -537,6 +537,17 @@ export async function POST(req: Request) {
     return png;
   }).catch(() => ({ released: 0 }));
 
+  // ── Fixtures that are not happening ───────────────────────────────────────
+  // Checked BEFORE the warning goes out, so a called-off match does not get a
+  // 30-minute warning and a lineup card for a game nobody is playing.
+  let postponed = 0;
+  try {
+    const { sweepPostponed } = await import('@/lib/notify/postponed');
+    postponed = await sweepPostponed(db, nowMs);
+  } catch (e) {
+    summary.errors.push(`postponed sweep failed: ${(e as Error).message}`);
+  }
+
   // ── Lineup card catch-up ──────────────────────────────────────────────────
   // The warning has gone out but ESPN had not published team sheets yet.
   // Keep trying every tick until kickoff; lineup_sent_at is stamped only on a
@@ -611,5 +622,5 @@ export async function POST(req: Request) {
     summary.errors.push(`pin refresh failed: ${(e as Error).message}`);
   }
 
-  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, liveNow, lineups, cupsFound, cupResults, scheduleSync: doScheduleSync, forced: forceSync });
+  return NextResponse.json({ ok: true, ...summary, digestReleased: drained.released, prematch, liveNow, lineups, postponed, cupsFound, cupResults, scheduleSync: doScheduleSync, forced: forceSync });
 }

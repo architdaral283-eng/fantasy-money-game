@@ -74,6 +74,27 @@ export function isLive(m: { status: string; completed: boolean }): boolean {
   return !m.completed && LIVE.has(m.status);
 }
 
+/**
+ * Matches that are not going to finish today.
+ *
+ * DELAYED and SUSPENDED are deliberately NOT here: a rain delay resumes, and
+ * clearing the fixture over one would throw away a reminder that is still
+ * about to be correct. These three mean the date is dead and a new one has to
+ * come from the provider.
+ */
+const OFF = new Set(['STATUS_POSTPONED', 'STATUS_CANCELED', 'STATUS_CANCELLED', 'STATUS_ABANDONED']);
+
+export function isOff(m: { status: string }): boolean {
+  return OFF.has(m.status);
+}
+
+/** 'Postponed' / 'Abandoned' / 'Cancelled', for saying so out loud. */
+export function offReason(m: { status: string }): string {
+  if (m.status === 'STATUS_ABANDONED') return 'Abandoned';
+  if (m.status === 'STATUS_POSTPONED') return 'Postponed';
+  return 'Cancelled';
+}
+
 /** Minute a goal was scored, stoppage time folded back ("90'+5'" → 90). */
 export function minuteOf(g: { minute: string }): number {
   const m = String(g.minute).match(/(\d+)/);

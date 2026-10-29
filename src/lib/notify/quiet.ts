@@ -8,16 +8,19 @@ import { sendHtml } from '@/lib/notify/send';
 
 export const QUIET_START_MIN = 4 * 60 + 30; // 04:30 IST
 export const QUIET_END_MIN = 16 * 60 + 30; // 16:30 IST — daytime digest releases here
-// Six was set when the bot only announced fixtures and results, then ten once
-// the roundup, the brief and the polls existed. Lineup cards push a busy
-// night past that again: 4 Nov has two counted UCL fixtures AND the reminders
-// and polls for 5 Nov, which is thirteen before anything is held.
+// Sized for the worst real day, now that the count is honest.
 //
-// Twenty is deliberately generous. This number was never meant to ration
-// good messages — it exists so a provider loop or a retry storm cannot empty
-// itself into the group. Quiet hours still hold non-urgent traffic to 16:30,
-// and anything over the ceiling queues rather than being dropped.
-export const GROUP_DAILY_CEILING = 20;
+// Four counted fixtures in 24 hours, each spending a warning, a lineup card,
+// a roast carrying its poll verdict and a standings image — sixteen. Add the
+// reminders and polls for the next day's four, the 09:00 matchday brief and
+// the 23:00 news brief, and a genuinely busy Wednesday reaches about
+// twenty-six. On the 1st of a month in a week with a Sunday roundup, higher.
+//
+// Forty leaves room for that and still does the only job this number was
+// ever for: stopping a provider loop or a retry storm emptying itself into
+// the group. Nothing over the ceiling is dropped — it queues to 16:30 — but
+// a roast arriving a day late is a roast nobody wants.
+export const GROUP_DAILY_CEILING = 40;
 
 export function istMinutes(d: Date): number {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
@@ -86,10 +89,22 @@ export async function markChatter(db: SupabaseClient, playerId: string): Promise
   );
 }
 
+/**
+ * Everything the group has actually received in 24h.
+ *
+ * This used to count template_key 'group' only, which is TEXT. Photos log as
+ * 'photo' and polls logged nothing at all, so a standings image, a lineup
+ * card and a prediction poll were all invisible to the ceiling while still
+ * being gated by it — the bot could post twice what it thought it had and
+ * the number meant nothing. A message in the group is a message in the
+ * group, whatever shape it arrived in.
+ */
+const GROUP_KINDS = ['group', 'photo', 'poll'];
+
 async function groupSentToday(db: SupabaseClient): Promise<number> {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const { count } = await db.from('notifications').select('id', { count: 'exact', head: true })
-    .eq('channel', 'telegram').eq('template_key', 'group').eq('status', 'SENT').gte('sent_at', since);
+    .eq('channel', 'telegram').in('template_key', GROUP_KINDS).eq('status', 'SENT').gte('sent_at', since);
   return count ?? 0;
 }
 

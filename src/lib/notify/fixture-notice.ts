@@ -5,6 +5,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildFixtureNotice } from '@/lib/notify/format';
 import { h2hTally, h2hText, lastMeeting, lastMeetingText } from '@/lib/stats/h2h';
+import { mention } from '@/lib/notify/mention';
 
 export interface NoticeFixture {
   id?: string;
@@ -34,14 +35,19 @@ export async function fixtureNotice(
   kind: 'tomorrow' | 'today' | 'prematch' | 'drawn',
   mins?: number,
 ): Promise<string> {
-  const [{ data: clubs }, { data: bal }, { data: comps }, { data: fx }, { data: wld }, { data: res }] = await Promise.all([
+  const [{ data: clubs }, { data: bal }, { data: comps }, { data: fx }, { data: wld }, { data: res }, { data: people }] = await Promise.all([
     db.from('clubs').select('id,name,owner_id'),
     db.from('player_balances').select('id,name,net_inr'),
     db.from('competitions').select('id,name').eq('id', f.competition_id),
     db.from('fixtures').select('id,home_club_id,away_club_id,status,kickoff_utc').eq('status', 'RECORDED'),
     db.from('wld_records').select('player_id,fixture_id,outcome'),
     db.from('results').select('fixture_id,h90,a90'),
+    // For the mention. telegram_chat_id IS the user id in a private chat.
+    db.from('players').select('id,telegram_chat_id'),
   ]);
+
+  const chatOf = new Map(((people ?? []) as { id: string; telegram_chat_id: string | null }[])
+    .map((p) => [p.id, p.telegram_chat_id]));
 
   const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
   const bmap = new Map(((bal ?? []) as { id: string; name: string; net_inr: number }[]).map((b) => [b.id, { name: b.name, net: Number(b.net_inr) }]));
@@ -91,6 +97,8 @@ export async function fixtureNotice(
     dateIST: f.kickoff_utc ? dateFmt.format(new Date(f.kickoff_utc)) : null,
     ownerA: aName,
     ownerB: bName,
+    ownerAHtml: mention(aName, chatOf.get(oa)),
+    ownerBHtml: mention(bName, chatOf.get(ob)),
     h2h: sameOwner ? null : h2hText(aName, bName, tally),
     lastMeeting: history
       ? lastMeetingText(

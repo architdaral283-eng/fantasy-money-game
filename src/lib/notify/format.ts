@@ -109,6 +109,13 @@ export interface FixtureNotice {
   dateIST?: string | null;   // 'Sun 26 Oct'
   ownerA: string;
   ownerB: string;
+  /**
+   * The same two names as ready-made HTML mentions, when they are linked.
+   * Already escaped and already markup, so these are interpolated RAW — never
+   * put anything through esc() that arrives in one of these.
+   */
+  ownerAHtml?: string | null;
+  ownerBHtml?: string | null;
   h2h?: string | null;       // 'Anmol leads 3–1'
   lastMeeting?: string | null; // 'Rematch: Arsenal 1–2 Real Madrid, Sat 24 Oct. Vedant took ₹500 off Archit.'
   netA?: number | null;
@@ -127,15 +134,22 @@ export function buildFixtureNotice(n: FixtureNotice): string {
   const where = [compName(n.compId, n.compName), n.round || null, n.kind === 'prematch' ? null : n.dateIST || null]
     .filter(Boolean).join(' · ');
 
+  // A mention pierces a muted group; a plain name does not. Only the two
+  // with money on this fixture get one.
+  const a = n.ownerAHtml || esc(n.ownerA);
+  const b = n.ownerBHtml || esc(n.ownerB);
+
   const subject = `${esc(n.home)} v ${esc(n.away)}\n${esc(where)}`;
   const moneyBlock = n.sameOwner
-    ? `${esc(n.ownerA)} owns both. Nothing moves.`
-    : `${esc(n.ownerA)} v ${esc(n.ownerB)}\n${STAKE_LINE}`;
+    ? `${a} owns both. Nothing moves.`
+    : `${a} v ${b}\n${STAKE_LINE}`;
 
   const context: string[] = [];
   if (n.h2h) context.push(`Head to head: ${esc(n.h2h)}`);
   if (n.lastMeeting) context.push(esc(n.lastMeeting));
   if (typeof n.netA === 'number' && typeof n.netB === 'number') {
+    // Names only here: mentioning the same two men twice in one message
+    // notifies them twice and reads like the bot is shouting.
     context.push(standingLine(n.ownerA, n.netA, n.ownerB, n.netB));
   }
   const tail = n.kind === 'drawn' && !n.timeIST
@@ -793,4 +807,32 @@ export function clubFormLine(rows: ClubFormRow[]): string | null {
   const top = live[0];
   const bottom = live[live.length - 1];
   return `Club form: ${esc(top.name)}'s four lead on ${top.points} points, ${esc(bottom.name)}'s bottom on ${bottom.points}.`;
+}
+
+// ---------------------------------------------------------------------------
+// A fixture that is not happening after all.
+
+export interface PostponedNotice {
+  home: string;
+  away: string;
+  /** 'Postponed', 'Abandoned' or 'Cancelled'. */
+  reason: string;
+  /** True when the group had already been told it was on. */
+  wasAnnounced: boolean;
+  /** True when a poll had been opened and is being thrown away. */
+  hadPoll: boolean;
+}
+
+export function buildPostponed(n: PostponedNotice): string {
+  const tail = [
+    'Nothing moves.',
+    n.hadPoll ? 'The poll is void.' : null,
+    'It goes back in the diary the moment a new date lands.',
+  ].filter(Boolean).join(' ');
+
+  return block(
+    head('Called off', n.reason),
+    `${esc(n.home)} v ${esc(n.away)}`,
+    tail,
+  );
 }

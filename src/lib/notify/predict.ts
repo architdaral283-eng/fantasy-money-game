@@ -38,6 +38,13 @@ export async function openPollFor(
   const sent = await sendPoll(gid, `${home} v ${away} — your call?`, [home, 'Draw', away]);
   if (!sent) return false;
 
+  // Logged so the ceiling can see it. A poll is a message in the group like
+  // any other, and it was previously counted as nothing at all.
+  await db.from('notifications').insert({
+    player_id: null, channel: 'telegram', template_key: 'poll',
+    payload: { fixture: f.id }, status: 'SENT', provider_message_id: String(sent.messageId),
+  }).then(() => undefined, () => undefined);
+
   const { error } = await db.from('prediction_polls').insert({
     fixture_id: f.id, poll_id: sent.pollId, chat_id: String(gid), message_id: sent.messageId,
   });
