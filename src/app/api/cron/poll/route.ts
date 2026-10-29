@@ -537,27 +537,25 @@ export async function POST(req: Request) {
     return png;
   }).catch(() => ({ released: 0 }));
 
-  // ── Team news, 75 to 20 minutes out, by DM ────────────────────────────────
-  // ESPN publishes lineups around an hour before kickoff, so the window is
-  // wide and lineup_sent_at is set ONLY when a DM actually left. An empty
-  // answer means "not published yet", and marking the fixture done on one of
-  // those would silence it for good.
+  // ── Lineup card catch-up ──────────────────────────────────────────────────
+  // The warning has gone out but ESPN had not published team sheets yet.
+  // Keep trying every tick until kickoff; lineup_sent_at is stamped only on a
+  // card that actually left, so an early empty answer costs nothing.
   let lineups = 0;
-  const { data: nearly } = await db.from('fixtures')
-    .select('id,competition_id,home_club_id,away_club_id,kickoff_utc')
-    .eq('status', 'SCHEDULED').eq('is_same_owner', false).is('lineup_sent_at', null)
-    .gt('kickoff_utc', new Date(nowMs + 20 * 60 * 1000).toISOString())
-    .lte('kickoff_utc', new Date(nowMs + 75 * 60 * 1000).toISOString());
-  for (const f of (nearly ?? []) as { id: string; competition_id: string; home_club_id: string; away_club_id: string; kickoff_utc: string }[]) {
+  const { data: awaiting } = await db.from('fixtures')
+    .select('id')
+    .eq('status', 'SCHEDULED').eq('is_same_owner', false)
+    .not('pre_match_sent_at', 'is', null).is('lineup_sent_at', null)
+    .gt('kickoff_utc', new Date(nowMs).toISOString());
+  for (const f of (awaiting ?? []) as { id: string }[]) {
     try {
-      const { lineupDms } = await import('@/lib/notify/lineup-dm');
-      const n = await lineupDms(db, f);
-      if (n > 0) {
+      const { postLineupCard } = await import('@/lib/notify/lineup-card');
+      if (await postLineupCard(db, f.id)) {
         await db.from('fixtures').update({ lineup_sent_at: new Date().toISOString() }).eq('id', f.id);
-        lineups += n;
+        lineups++;
       }
     } catch (e) {
-      summary.errors.push(`lineups failed for ${f.id}: ${(e as Error).message}`);
+      summary.errors.push(`lineup catch-up failed for ${f.id}: ${(e as Error).message}`);
     }
   }
 
@@ -573,6 +571,17 @@ export async function POST(req: Request) {
       const mins = Math.max(1, Math.ceil((Date.parse(f.kickoff_utc) - Date.now()) / 60000));
       await db.from('fixtures').update({ pre_match_sent_at: new Date().toISOString() }).eq('id', f.id);
       await sendGroup(db, await fixtureNotice(db, f, 'prematch', mins), { urgent: true });
+      // The lineup card follows the warning, never precedes it. ESPN usually
+      // has the sheets an hour out, so this normally lands immediately after.
+      try {
+        const { postLineupCard } = await import('@/lib/notify/lineup-card');
+        if (await postLineupCard(db, f.id)) {
+          await db.from('fixtures').update({ lineup_sent_at: new Date().toISOString() }).eq('id', f.id);
+          lineups++;
+        }
+      } catch (e) {
+        summary.errors.push(`lineup card failed for ${f.id}: ${(e as Error).message}`);
+      }
       // Voting closes here. scorePoll() also throws out anything cast after
       // kickoff, so a missed tick cannot turn into a 89th-minute prediction.
       const { closePollFor } = await import('@/lib/notify/predict');

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { parseLineups, inXI } from '@/lib/providers/espn-lineups';
-import { buildTeamNews } from '@/lib/notify/format';
 
 // 359 is Arsenal, 360 Manchester United, per TEAM_ID_MAP.
 const player = (name: string, starter: boolean) => ({
@@ -66,37 +65,5 @@ describe('finding a named player in an eleven', () => {
   });
   it('says no rather than yes when asked about nobody', () => {
     expect(inXI(xi, '')).toBe(false);
-  });
-});
-
-describe('the team-news DM', () => {
-  const base = {
-    club: 'Arsenal', opponent: 'Real Madrid', minsToKickoff: 60,
-    formation: '4-3-3', xi: ['Raya', 'White', 'Saliba'], bench: 9,
-  };
-
-  it('leads with the clock and names the eleven', () => {
-    const t = buildTeamNews({ ...base, marquee: 'Bukayo Saka', marqueeStarts: true });
-    expect(t).toContain('TEAM NEWS · 60 minutes');
-    expect(t).toContain('Arsenal v Real Madrid');
-    expect(t).toContain('4-3-3');
-    expect(t).toContain('Raya, White, Saliba');
-    expect(t).toContain('Bukayo Saka starts.');
-  });
-
-  it('says plainly when the best player is out', () => {
-    const t = buildTeamNews({ ...base, marquee: 'Bukayo Saka', marqueeStarts: false });
-    expect(t).toContain('Bukayo Saka is not in the XI.');
-  });
-
-  it('says nothing about a player it has none on file for', () => {
-    const t = buildTeamNews({ ...base, marquee: null, marqueeStarts: null });
-    expect(t).toContain('9 on the bench.');
-    expect(t).not.toContain('XI.');
-  });
-
-  it('copes with no formation published', () => {
-    const t = buildTeamNews({ ...base, formation: null, marquee: null, marqueeStarts: null });
-    expect(t).toContain('Arsenal v Real Madrid');
   });
 });

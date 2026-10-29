@@ -737,36 +737,6 @@ export function buildRivalryTrophies(rows: TrophyLine[], you?: string | null): s
 }
 
 // ---------------------------------------------------------------------------
-// Team news. A DM, because an hour before kickoff only two people care.
-
-export interface TeamNews {
-  club: string;
-  opponent: string;
-  minsToKickoff: number;
-  formation: string | null;
-  xi: string[];
-  bench: number;
-  marquee: string | null;
-  /** Null when we have no marquee player on file for the club. */
-  marqueeStarts: boolean | null;
-}
-
-export function buildTeamNews(n: TeamNews): string {
-  const note = n.marquee === null || n.marqueeStarts === null
-    ? null
-    : n.marqueeStarts
-      ? `${esc(n.marquee)} starts.`
-      : `${esc(n.marquee)} is not in the XI.`;
-
-  return block(
-    head('Team news', `${Math.max(1, n.minsToKickoff)} minutes`),
-    `${esc(n.club)} v ${esc(n.opponent)}${n.formation ? `\n${esc(n.formation)}` : ''}`,
-    pre(esc(n.xi.join(', '))),
-    [n.bench > 0 ? `${n.bench} on the bench.` : null, note].filter(Boolean).join(' '),
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Banker picks. One a week, double or minus one.
 
 export interface BankerOption { id: string; label: string; when: string }
