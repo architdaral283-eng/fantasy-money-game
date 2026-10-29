@@ -93,9 +93,7 @@ export async function settlePredictions(db: SupabaseClient, fixtureId: string): 
 
   const actual = outcomeOf(Number(R.h90), Number(R.a90));
   const kickoff = F.kickoff_utc ? Date.parse(F.kickoff_utc) : NaN;
-  const { bankersFor } = await import('@/lib/notify/banker');
-  const bankers = await bankersFor(db, fixtureId).catch(() => new Set<string>());
-  const scored = scorePoll(cast, actual, kickoff, bankers);
+  const scored = scorePoll(cast, actual, kickoff);
   if (!scored.length) {
     await closePollFor(db, fixtureId);
     return null;
@@ -126,7 +124,7 @@ export async function settlePredictions(db: SupabaseClient, fixtureId: string): 
     choice === HOME ? clubName(F.home_club_id) : choice === AWAY ? clubName(F.away_club_id) : 'a draw';
 
   return buildPredictionResult({
-    hits: scored.filter((s) => s.correct).map((s) => `${nameOf(s.player)}${s.banker ? ' (banker)' : ''}`),
+    hits: scored.filter((s) => s.correct).map((s) => nameOf(s.player)),
     misses: scored
       .filter((s) => !s.correct && choiceToOutcome(s.choice) !== null)
       .map((s) => ({
