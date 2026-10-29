@@ -1,17 +1,10 @@
 // Owner, Club and Flop of the Month. Pure arithmetic over the ledger, which
 // is the only record that cannot be argued with.
 
-export interface MonthLedgerRow {
-  from_player_id: string;
-  to_player_id: string;
-  amount_inr: number;
-  created_at: string;
-  fixture_id?: string | null;
-  description: string;
-  event_type?: string | null;
-}
+import { effectiveTransfers, type LedgerLike } from '@/lib/ledger/effective';
+
+export type MonthLedgerRow = LedgerLike;
 export interface MonthFixture { id: string; home_club_id: string; away_club_id: string }
-export interface MonthResult { fixture_id: string; h90: number; a90: number }
 
 export interface Standout { id: string; amount: number }
 export interface MonthlyAwards {
@@ -21,7 +14,7 @@ export interface MonthlyAwards {
   /** Club that earned its owner the most, and the one that cost the most. */
   club: Standout | null;
   worstClub: Standout | null;
-  biggest: { description: string; amount: number; from: string; to: string } | null;
+  biggest: { description: string; amount: number; from: string; to: string; fixtureId: string | null } | null;
   moved: number;
   results: number;
 }
@@ -35,46 +28,48 @@ export function monthlyAwards(
   players: readonly string[],
   ledger: MonthLedgerRow[],
   fixtures: MonthFixture[],
-  results: MonthResult[],
+  ownerOf: (clubId: string) => string | undefined,
   fromMs: number,
   toMs: number,
 ): MonthlyAwards {
-  const rows = ledger.filter((r) => inWindow(r.created_at, fromMs, toMs));
+  // Netted per fixture first. Raw rows count every reversal and duplicate
+  // correction as money that moved — eight of the season's first 24 rows were
+  // corrections.
+  const rows = effectiveTransfers(ledger).filter((r) => inWindow(r.created_at, fromMs, toMs));
   if (!rows.length) {
     return { owner: null, flop: null, club: null, worstClub: null, biggest: null, moved: 0, results: 0 };
   }
 
   const net = new Map<string, number>(players.map((p) => [p, 0]));
   for (const r of rows) {
-    net.set(r.to_player_id, (net.get(r.to_player_id) ?? 0) + Number(r.amount_inr));
-    net.set(r.from_player_id, (net.get(r.from_player_id) ?? 0) - Number(r.amount_inr));
+    net.set(r.to_player_id, (net.get(r.to_player_id) ?? 0) + r.amount_inr);
+    net.set(r.from_player_id, (net.get(r.from_player_id) ?? 0) - r.amount_inr);
   }
   const ranked = [...net.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
-  // Club attribution: a MATCH row carries its fixture, and the result says
-  // which club won it. Credit the winner, debit the loser. A row without a
-  // fixture (a trophy, a correction) belongs to nobody's club.
+  // Club attribution: the club in the fixture owned by whoever was PAID. Not
+  // the 90-minute score, which is level for every tie settled in extra time or
+  // on penalties and would credit nobody — and not the description, which is
+  // an audit string.
   const fmap = new Map(fixtures.map((f) => [f.id, f]));
-  const rmap = new Map(results.map((r) => [r.fixture_id, r]));
   const byClub = new Map<string, number>();
   let resultCount = 0;
   for (const r of rows) {
     if (!r.fixture_id) continue;
     const f = fmap.get(r.fixture_id);
-    const res = rmap.get(r.fixture_id);
-    if (!f || !res) continue;
+    if (!f) continue;
     resultCount++;
-    if (res.h90 === res.a90) continue;
-    const won = res.h90 > res.a90 ? f.home_club_id : f.away_club_id;
-    const lost = res.h90 > res.a90 ? f.away_club_id : f.home_club_id;
-    const amt = Number(r.amount_inr);
-    byClub.set(won, (byClub.get(won) ?? 0) + amt);
-    byClub.set(lost, (byClub.get(lost) ?? 0) - amt);
+    const sides = [f.home_club_id, f.away_club_id];
+    const won = sides.find((c) => ownerOf(c) === r.to_player_id);
+    const lost = sides.find((c) => ownerOf(c) === r.from_player_id);
+    if (!won || !lost || won === lost) continue;
+    byClub.set(won, (byClub.get(won) ?? 0) + r.amount_inr);
+    byClub.set(lost, (byClub.get(lost) ?? 0) - r.amount_inr);
   }
   const clubs = [...byClub.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
   const biggestRow = [...rows].sort((a, b) =>
-    Number(b.amount_inr) - Number(a.amount_inr) || a.created_at.localeCompare(b.created_at))[0];
+    b.amount_inr - a.amount_inr || a.created_at.localeCompare(b.created_at))[0];
 
   return {
     owner: ranked.length && ranked[0][1] > 0 ? { id: ranked[0][0], amount: ranked[0][1] } : null,
@@ -85,11 +80,12 @@ export function monthlyAwards(
       ? { id: clubs[clubs.length - 1][0], amount: clubs[clubs.length - 1][1] } : null,
     biggest: biggestRow ? {
       description: biggestRow.description,
-      amount: Number(biggestRow.amount_inr),
+      amount: biggestRow.amount_inr,
       from: biggestRow.from_player_id,
       to: biggestRow.to_player_id,
+      fixtureId: biggestRow.fixture_id,
     } : null,
-    moved: rows.reduce((s, r) => s + Number(r.amount_inr), 0),
+    moved: rows.reduce((s, r) => s + r.amount_inr, 0),
     results: resultCount,
   };
 }

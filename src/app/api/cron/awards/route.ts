@@ -13,6 +13,7 @@ import { sendGroup } from '@/lib/notify/quiet';
 import { groupId } from '@/lib/notify/send';
 import { buildMonthlyAwards } from '@/lib/notify/format';
 import { monthlyAwards, monthBounds, type MonthLedgerRow } from '@/lib/awards/monthly';
+import { describeFixture } from '@/lib/ledger/effective';
 import { PLAYERS, SEASON_START } from '@/lib/stats/weekly';
 
 export const maxDuration = 60;
@@ -38,9 +39,9 @@ export async function POST(req: Request) {
     : monthBounds(Date.now());
 
   const [{ data: led }, { data: fx }, { data: res }, { data: clubs }, { data: bal }] = await Promise.all([
-    db.from('ledger_entries').select('from_player_id,to_player_id,amount_inr,created_at,fixture_id,description'),
+    db.from('ledger_entries').select('id,from_player_id,to_player_id,amount_inr,created_at,fixture_id,description,event_type'),
     db.from('fixtures').select('id,home_club_id,away_club_id'),
-    db.from('results').select('fixture_id,h90,a90'),
+    db.from('results').select('fixture_id,h90,a90,h120,a120'),
     db.from('clubs').select('id,name,owner_id'),
     db.from('player_balances').select('id,name'),
   ]);
@@ -49,11 +50,14 @@ export async function POST(req: Request) {
   const pmap = new Map(((bal ?? []) as { id: string; name: string }[]).map((b) => [b.id, b.name]));
   const pname = (id: string) => pmap.get(id) ?? id;
 
+  const fixtures = (fx ?? []) as { id: string; home_club_id: string; away_club_id: string }[];
+  const results = (res ?? []) as { fixture_id: string; h90: number; a90: number; h120: number | null; a120: number | null }[];
+
   const a = monthlyAwards(
     PLAYERS,
     (led ?? []) as MonthLedgerRow[],
-    (fx ?? []) as { id: string; home_club_id: string; away_club_id: string }[],
-    (res ?? []) as { fixture_id: string; h90: number; a90: number }[],
+    fixtures,
+    (clubId) => cmap.get(clubId)?.owner_id,
     bounds.from, bounds.to,
   );
 
@@ -71,7 +75,11 @@ export async function POST(req: Request) {
     club: clubLine(a.club),
     worstClub: clubLine(a.worstClub),
     biggest: a.biggest ? {
-      description: a.biggest.description,
+      // The ledger's own wording is an audit string ("barcelona v real-madrid
+      // (LA_LIGA)"). People get club names and the score.
+      description: (a.biggest.fixtureId
+        && describeFixture(a.biggest.fixtureId, fixtures, results, (id) => cmap.get(id)?.name ?? id))
+        || a.biggest.description,
       amount: a.biggest.amount,
       from: pname(a.biggest.from),
       to: pname(a.biggest.to),

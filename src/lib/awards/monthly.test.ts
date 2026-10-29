@@ -16,11 +16,12 @@ const fixtures = [
   { id: 'f2', home_club_id: 'barcelona', away_club_id: 'napoli' },
   { id: 'f3', home_club_id: 'bayern', away_club_id: 'liverpool' },
 ];
-const results = [
-  { fixture_id: 'f1', h90: 0, a90: 2 },
-  { fixture_id: 'f2', h90: 3, a90: 1 },
-  { fixture_id: 'f3', h90: 1, a90: 1 },
-];
+const OWNERS: Record<string, string> = {
+  arsenal: 'archit', 'real-madrid': 'vedant',
+  barcelona: 'harshal', napoli: 'anmol',
+  bayern: 'harshal', liverpool: 'anmol',
+};
+const ownerOf = (club: string) => OWNERS[club];
 
 describe('month boundaries', () => {
   it('takes the IST month before the one it is called in', () => {
@@ -57,53 +58,72 @@ describe('monthly awards', () => {
     row('anmol', 'harshal', 500, 12, 'f2'),
     row('vedant', 'archit', 500, 20, null, 'correction'),
     row('harshal', 'vedant', 500, 22, null, 'correction'),
-    row('archit', 'vedant', 5000, 2, 'f1', 'september, out of window'),
+    row('archit', 'vedant', 5000, 2, 'f9', 'september, out of window'),
   ];
   // the row labelled out-of-window is dated into September on purpose
   ledger.find((r) => r.description.startsWith('september'))!.created_at = '2026-09-02T18:00:00Z';
 
   it('ignores rows outside the window', () => {
-    const a = monthlyAwards(PLAYERS, ledger, fixtures, results, OCT.from, OCT.to);
+    const a = monthlyAwards(PLAYERS, ledger, fixtures, ownerOf, OCT.from, OCT.to);
     expect(a.moved).toBe(2500);
   });
 
   it('crowns the best and worst net swing', () => {
-    const a = monthlyAwards(PLAYERS, ledger, fixtures, results, OCT.from, OCT.to);
+    const a = monthlyAwards(PLAYERS, ledger, fixtures, ownerOf, OCT.from, OCT.to);
     expect(a.owner).toEqual({ id: 'vedant', amount: 1000 });
     expect(a.flop).toEqual({ id: 'archit', amount: -500 });
   });
 
   it('attributes money to the club that actually won the fixture', () => {
-    const a = monthlyAwards(PLAYERS, ledger, fixtures, results, OCT.from, OCT.to);
+    const a = monthlyAwards(PLAYERS, ledger, fixtures, ownerOf, OCT.from, OCT.to);
     expect(a.club).toEqual({ id: 'real-madrid', amount: 1000 });
     expect(a.worstClub).toEqual({ id: 'arsenal', amount: -1000 });
   });
 
   it('counts only fixture-backed rows as results', () => {
-    const a = monthlyAwards(PLAYERS, ledger, fixtures, results, OCT.from, OCT.to);
+    const a = monthlyAwards(PLAYERS, ledger, fixtures, ownerOf, OCT.from, OCT.to);
     expect(a.results).toBe(2);
   });
 
   it('breaks a dead-level month alphabetically rather than at random', () => {
     const level = [row('archit', 'vedant', 500, 3, null), row('anmol', 'harshal', 500, 4, null)];
-    const a = monthlyAwards(PLAYERS, level, fixtures, results, OCT.from, OCT.to);
+    const a = monthlyAwards(PLAYERS, level, fixtures, ownerOf, OCT.from, OCT.to);
     expect(a.owner).toEqual({ id: 'harshal', amount: 500 });
     expect(a.flop).toEqual({ id: 'archit', amount: -500 });
   });
 
   it('names the biggest single transfer', () => {
-    const a = monthlyAwards(PLAYERS, ledger, fixtures, results, OCT.from, OCT.to);
+    const a = monthlyAwards(PLAYERS, ledger, fixtures, ownerOf, OCT.from, OCT.to);
     expect(a.biggest).toMatchObject({ amount: 1000, from: 'archit', to: 'vedant' });
   });
 
-  it('credits no club for a draw', () => {
-    const a = monthlyAwards(PLAYERS, [row('archit', 'vedant', 500, 9, 'f3')], fixtures, results, OCT.from, OCT.to);
-    expect(a.club).toBeNull();
+  it('credits the club owned by whoever was paid, not whoever led at 90 minutes', () => {
+    // A tie level at 90 and settled on penalties: harshal's Bayern went through.
+    const a = monthlyAwards(PLAYERS, [row('anmol', 'harshal', 500, 9, 'f3')], fixtures, ownerOf, OCT.from, OCT.to);
+    expect(a.club).toEqual({ id: 'bayern', amount: 500 });
+    expect(a.worstClub).toEqual({ id: 'liverpool', amount: -500 });
+  });
+
+  it('counts a corrected result once, at the amount that stands', () => {
+    // Production history for one ₹500 result: original, reversal, correction,
+    // a duplicate reversal and correction, then reversals of the duplicates.
+    const corrected = [
+      row('anmol', 'harshal', 500, 6, 'f3', 'bayern 1-2 liverpool'),
+      row('harshal', 'anmol', 500, 7, 'f3', 'REVERSAL of entry #2'),
+      row('harshal', 'anmol', 500, 7, 'f3', 'CORRECTION: bayern 1-2 liverpool'),
+      row('harshal', 'anmol', 500, 8, 'f3', 'REVERSAL of entry #2'),
+      row('harshal', 'anmol', 500, 8, 'f3', 'CORRECTION: bayern 1-2 liverpool'),
+      row('anmol', 'harshal', 500, 9, 'f3', 'REVERSAL of duplicate entry #9'),
+      row('anmol', 'harshal', 500, 9, 'f3', 'REVERSAL of duplicate entry #8'),
+    ];
+    const a = monthlyAwards(PLAYERS, corrected, fixtures, ownerOf, OCT.from, OCT.to);
+    expect(a.moved).toBe(500);            // not 3,500
     expect(a.results).toBe(1);
+    expect(a.biggest).toMatchObject({ amount: 500, to: 'anmol', fixtureId: 'f3' });
   });
 
   it('returns an empty month rather than throwing', () => {
-    const a = monthlyAwards(PLAYERS, [], fixtures, results, OCT.from, OCT.to);
+    const a = monthlyAwards(PLAYERS, [], fixtures, ownerOf, OCT.from, OCT.to);
     expect(a).toEqual({ owner: null, flop: null, club: null, worstClub: null, biggest: null, moved: 0, results: 0 });
   });
 });
