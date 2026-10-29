@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/db/supabase';
 import { sendGroup } from '@/lib/notify/quiet';
 import { buildWeeklyText } from '@/lib/notify/format';
+import { effectiveTransfers, describeFixture } from '@/lib/ledger/effective';
 import {
   formTable, rivalries, unluckyTable, exposedThisWeek, momentOfWeek,
   winsToCatch, runningTitle, landmark,
@@ -34,21 +35,27 @@ export async function POST(req: Request) {
 
   const [{ data: wld }, { data: led }, { data: fx }, { data: res }, { data: clubs }, { data: bal }] = await Promise.all([
     db.from('wld_records').select('player_id,outcome,occurred_at,fixture_id'),
-    db.from('ledger_entries').select('from_player_id,to_player_id,amount_inr,created_at,fixture_id,description'),
+    db.from('ledger_entries').select('id,from_player_id,to_player_id,amount_inr,created_at,fixture_id,description,event_type'),
     db.from('fixtures').select('id,home_club_id,away_club_id,status,kickoff_utc,is_same_owner'),
-    db.from('results').select('fixture_id,h90,a90'),
-    db.from('clubs').select('id,owner_id'),
+    db.from('results').select('fixture_id,h90,a90,h120,a120'),
+    db.from('clubs').select('id,name,owner_id'),
     db.from('player_balances').select('id,name,net_inr'),
   ]);
 
-  const owners = new Map(((clubs ?? []) as { id: string; owner_id: string }[]).map((c) => [c.id, c.owner_id]));
+  const clubRows = (clubs ?? []) as { id: string; name: string; owner_id: string }[];
+  const clubName = (id: string) => clubRows.find((c) => c.id === id)?.name ?? id;
+  const owners = new Map(clubRows.map((c) => [c.id, c.owner_id]));
   const ownerOf = (clubId: string) => owners.get(clubId);
   const names = new Map(((bal ?? []) as { id: string; name: string }[]).map((b) => [b.id, b.name]));
   const nets = new Map(((bal ?? []) as { id: string; net_inr: number }[]).map((b) => [b.id, Number(b.net_inr)]));
   const nameOf = (id: string) => names.get(id) ?? id;
 
   const W = (wld ?? []) as WldRow[];
-  const L = (led ?? []) as LedgerRow[];
+  // Netted per fixture first. Raw rows count every reversal and duplicate
+  // correction as money that moved — eight of the season's first 24 rows are
+  // corrections, and Bayern v Dortmund alone holds seven for one ₹500 result.
+  // Unnetted, the hottest rivalry would have been announced at ₹3,500.
+  const L = effectiveTransfers((led ?? []) as LedgerRow[]) as unknown as LedgerRow[];
   const F = (fx ?? []) as FixtureRow[];
   const R = (res ?? []) as ResultRow[];
 
@@ -74,8 +81,12 @@ export async function POST(req: Request) {
     ? { chaser: nameOf(ordered[1][0]), leader: nameOf(ordered[0][0]), wins: winsToCatch(ordered[0][1] - ordered[1][1]) }
     : null;
 
-  const playedPaying = F.filter((f) => f.status === 'RECORDED' && !f.is_same_owner).length;
-  const totalPaying = F.filter((f) => !f.is_same_owner).length;
+  const paying = F.filter((f) => !f.is_same_owner);
+  const playedPaying = paying.filter((f) => f.status === 'RECORDED').length;
+  const totalPaying = paying.length;
+  // Halfway has to be CROSSED, so the landmark needs last week's count too.
+  const playedAWeekAgo = paying.filter((f) =>
+    f.status === 'RECORDED' && f.kickoff_utc !== null && Date.parse(f.kickoff_utc) < weekAgo).length;
 
   const weekLabel = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' })
     .format(new Date(nowMs));
@@ -84,11 +95,17 @@ export async function POST(req: Request) {
     weekLabel,
     table,
     rivalry: riv ? { a: nameOf(riv.a), b: nameOf(riv.b), moved: riv.moved, leader: riv.leader ? nameOf(riv.leader) : null } : null,
-    moment: moment ? { ...moment, from: nameOf(moment.from), to: nameOf(moment.to) } : null,
+    moment: moment ? {
+      ...moment,
+      // The ledger's own wording is an audit string: "barcelona v real-madrid
+      // (LA_LIGA)". People get club names and the score.
+      description: (moment.fixtureId && describeFixture(moment.fixtureId, F, R, clubName)) || moment.description,
+      from: nameOf(moment.from), to: nameOf(moment.to),
+    } : null,
     unlucky: unlucky ? { name: nameOf(unlucky.player), narrow: unlucky.narrow } : null,
     exposed: exposed.map((e) => ({ name: nameOf(e.player), fixtures: e.fixtures })),
     chase,
-    landmark: landmark(nowMs, playedPaying, totalPaying),
+    landmark: landmark(nowMs, playedPaying, totalPaying, playedAWeekAgo),
   });
 
   // The prediction league's one line, appended rather than threaded through
@@ -112,6 +129,6 @@ export async function POST(req: Request) {
   const bankerOffers = await offerBankers(db).catch(() => 0);
   return NextResponse.json({
     ok: true, bankerOffers, players: table.length, rivalry: !!riv, moment: !!moment,
-    landmark: landmark(nowMs, playedPaying, totalPaying),
+    landmark: landmark(nowMs, playedPaying, totalPaying, playedAWeekAgo),
   });
 }

@@ -119,12 +119,38 @@ describe('running titles', () => {
 
 describe('season landmarks', () => {
   const day = (n: number) => Date.parse(SEASON_START) + n * 864e5;
+
   it('marks the arbitrary days', () => {
     expect(landmark(day(100), 0, 0)).toContain('One hundred days');
     expect(landmark(day(55), 0, 0)).toBeNull();
   });
-  it('marks halfway by fixtures played', () => {
-    expect(landmark(day(55), 32, 64)).toContain('Halfway');
+
+  // The roundup runs on Sundays only, so an exact-day check could never fire
+  // for a mark that does not land on one. Day 200 of this season is a
+  // Tuesday: `days === 200` was unreachable and silently did nothing.
+  it('fires on the first roundup at or past the mark, not only on the day', () => {
+    expect(landmark(day(202), 0, 0)).toContain('Two hundred days');
+    expect(landmark(day(206), 0, 0)).toContain('Two hundred days');
+  });
+
+  it('fires each landmark once, not for a whole month after it', () => {
+    expect(landmark(day(107), 0, 0)).toBeNull();
+    expect(landmark(day(99), 0, 0)).toBeNull();
+  });
+
+  it('counts the run-in down rather than landing on it exactly', () => {
+    const end = Date.parse('2027-05-31T00:00:00Z');
+    const left = (n: number) => end - n * 864e5;
+    expect(landmark(left(5), 0, 0)).toContain('Final week.');
+    expect(landmark(left(26), 0, 0)).toContain('One month left.');
+    expect(landmark(left(96), 0, 0)).toContain('A hundred days left');
+  });
+
+  it('marks halfway when it is crossed, which an odd fixture count never hits exactly', () => {
+    // 63 paying fixtures: played*2 === total can never be true.
+    expect(landmark(day(55), 32, 63, 31)).toContain('Halfway');
+    expect(landmark(day(55), 32, 63, 32)).toBeNull();   // already marked last week
+    expect(landmark(day(55), 30, 63, 29)).toBeNull();   // not there yet
   });
 });
 

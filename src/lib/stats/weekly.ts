@@ -123,14 +123,18 @@ export function exposedThisWeek(
 
 // ——————————————————————————— moment of the week ———————————————————————————
 
-export interface Moment { description: string; amount: number; from: string; to: string }
+export interface Moment { description: string; amount: number; from: string; to: string; fixtureId: string | null }
 
 /** The single biggest transfer of the week. */
 export function momentOfWeek(ledger: LedgerRow[], sinceMs: number): Moment | null {
   const week = ledger.filter((e) => Date.parse(e.created_at) >= sinceMs);
   if (!week.length) return null;
   const top = week.reduce((best, e) => (e.amount_inr > best.amount_inr ? e : best), week[0]);
-  return { description: top.description, amount: top.amount_inr, from: top.from_player_id, to: top.to_player_id };
+  return {
+    description: top.description, amount: top.amount_inr,
+    from: top.from_player_id, to: top.to_player_id,
+    fixtureId: top.fixture_id ?? null,
+  };
 }
 
 // ——————————————————————————— title race maths ———————————————————————————
@@ -168,15 +172,39 @@ export function runningTitle(opts: { rank: number; of: number; net: number; form
 export const SEASON_START = '2026-08-21T00:00:00Z';
 export const SEASON_END = '2027-05-31T00:00:00Z';
 
-/** A landmark worth marking today, or null. Arbitrary on purpose. */
-export function landmark(nowMs: number, playedPaying: number, totalPaying: number): string | null {
+/**
+ * A landmark worth marking today, or null.
+ *
+ * These are checked on a WINDOW, not an exact day, because the only thing
+ * that reads them runs once a week. Day 200 of the season is a Tuesday and
+ * `days === 200` would never have been true on a Sunday — the landmark could
+ * not fire, ever, and nothing would have said so. Same for every countdown
+ * mark and for halfway, which `=== ` could not catch either because 63 paying
+ * fixtures never divide exactly in two.
+ *
+ * Each window is seven days wide and they do not overlap, so a landmark fires
+ * on the first roundup at or past it and exactly once.
+ */
+export function landmark(
+  nowMs: number,
+  playedPaying: number,
+  totalPaying: number,
+  playedAWeekAgo: number = playedPaying,
+): string | null {
   const days = Math.floor((nowMs - Date.parse(SEASON_START)) / 864e5);
-  if (days === 100) return 'One hundred days of this.';
-  if (days === 200) return 'Two hundred days. Nobody has learned anything.';
+  const reached = (mark: number) => days >= mark && days < mark + 7;
+  if (reached(100)) return 'One hundred days of this.';
+  if (reached(200)) return 'Two hundred days. Nobody has learned anything.';
+
   const left = Math.ceil((Date.parse(SEASON_END) - nowMs) / 864e5);
-  if (left === 100) return 'A hundred days left to fix it.';
-  if (left === 30) return 'One month left.';
-  if (left === 7) return 'Final week.';
-  if (totalPaying > 0 && playedPaying * 2 === totalPaying) return 'Halfway. Everything so far, again, in reverse.';
+  const under = (mark: number) => left <= mark && left > mark - 7;
+  if (under(7)) return 'Final week.';
+  if (under(30)) return 'One month left.';
+  if (under(100)) return 'A hundred days left to fix it.';
+
+  // Halfway is crossed, not landed on: true now and not true last week.
+  if (totalPaying > 0 && playedPaying * 2 >= totalPaying && playedAWeekAgo * 2 < totalPaying) {
+    return 'Halfway. Everything so far, again, in reverse.';
+  }
   return null;
 }
