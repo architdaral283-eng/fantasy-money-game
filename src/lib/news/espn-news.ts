@@ -14,6 +14,24 @@ const CLUB_BY_ESPN = new Map<string, string>(
   Object.entries(TEAM_ID_MAP).map(([club, ids]) => [String(ids.espn), club]),
 );
 
+const BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
+
+/** One league's raw news feed. Null on any failure — a league being down
+ *  costs that league, never the caller. The digest and the scout DM share it. */
+export async function fetchLeagueNews(lg: string, timeoutMs = 8000): Promise<unknown> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${BASE}/${lg}/news?limit=25`, { signal: ctl.signal, cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Leagues worth asking. Cup stories surface in the domestic feed anyway —
  *  Arsenal's League Cup exit arrived in eng.1, not a cup feed. */
 export const NEWS_LEAGUES = ['eng.1', 'esp.1', 'ger.1', 'ita.1', 'uefa.champions'] as const;
@@ -201,6 +219,13 @@ export function clubOfHeadline(item: NewsItem): string | null {
   return null;                                    // several tagged, none named: do not guess
 }
 
+// NOTE ON ESCAPING: these are strings joined into a RegExp, so a word
+// boundary is '\\b' (two characters in the source), exactly as in EVENT
+// above. It was '\\\\b' here until 30 Oct 2026, which compiles to a literal
+// backslash followed by b and matches nothing — ten entries, Milan, PSG,
+// Porto, Ajax, PSV, Lyon, Monaco, FIFA, UEFA and the Euros, were silently
+// dead, and the ELSEWHERE slot was picking from a smaller pool than it looked.
+//
 // ELSEWHERE gets exactly one slot, and only for football that a group of
 // four would actually recognise. Espanyol sacking their coach is real news and
 // means nothing in a Delhi living room. The club or competition has to be one
@@ -210,17 +235,17 @@ const MAJOR_ELSEWHERE = new RegExp([
   'liverpool', 'chelsea', 'tottenham', 'spurs', 'newcastle', 'everton', 'west ham',
   // Spain, Italy, Germany, France
   'sevilla', 'valencia', 'athletic( bilbao)?', 'villarreal', 'real sociedad',
-  'ac milan', '\\\\bmilan\\\\b', 'lazio', 'atalanta', 'fiorentina',
+  'ac milan', '\\bmilan\\b', 'lazio', 'atalanta', 'fiorentina',
   'frankfurt', 'stuttgart', 'wolfsburg', 'schalke',
-  '\\\\bpsg\\\\b', 'paris saint-germain', 'marseille', '\\\\blyon\\\\b', '\\\\bmonaco\\\\b',
+  '\\bpsg\\b', 'paris saint-germain', 'marseille', '\\blyon\\b', '\\bmonaco\\b',
   // the rest of the continent and beyond
   // "sporting" alone matched "sporting director" at every club on earth
-  'benfica', '\\\\bporto\\\\b', 'sporting (cp|lisbon)', '\\\\bajax\\\\b', '\\\\bpsv\\\\b', 'feyenoord',
+  'benfica', '\\bporto\\b', 'sporting (cp|lisbon)', '\\bajax\\b', '\\bpsv\\b', 'feyenoord',
   'celtic', 'rangers', 'galatasaray', 'fenerbah[çc]e', 'al-?nassr', 'al-?hilal', 'inter miami',
   // competitions, bodies and the sport's own furniture
-  'world cup', 'champions league', 'europa league', 'conference league', '\\\\beuros?\\\\b',
+  'world cup', 'champions league', 'europa league', 'conference league', '\\beuros?\\b',
   'premier league', 'laliga', 'la liga', 'serie a', 'bundesliga', 'ligue 1',
-  '\\\\bfifa\\\\b', '\\\\buefa\\\\b', 'ballon d.or', 'golden boot', 'player of the year',
+  '\\bfifa\\b', '\\buefa\\b', 'ballon d.or', 'golden boot', 'player of the year',
   'england', 'france', 'brazil', 'argentina', 'spain', 'germany', 'italy', 'portugal',
 ].join('|'), 'i');
 
@@ -257,8 +282,40 @@ export interface DigestSelection {
   /** Football that touches none of the sixteen. Carries ESPN's summary so it
    *  is not a bare headline about strangers. */
   general: NewsItem[];
-  /** Every id shown tonight, to be remembered so nothing repeats tomorrow. */
+  /** EVERY article id behind what went out tonight, including the syndicated
+   *  copies that were collapsed into it. */
   ids: string[];
+  /** The headline keys that went out tonight. */
+  keys: string[];
+}
+
+/**
+ * A story's identity, independent of ESPN's article id.
+ *
+ * WHY THIS EXISTS. ESPN syndicates one story into several league feeds with a
+ * DIFFERENT article id in each. The old code collapsed them by headline and
+ * remembered only the winning copy's id, so the other ids were never marked
+ * as seen. Days later — once the digest widened its window to 48 or 72 hours
+ * on a quiet day — a surviving copy walked straight back in. That is exactly
+ * how the Pulisic contract story ran twice.
+ */
+export function headlineKey(headline: string): string {
+  return headline.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** The stories about one club, newest first. Used by the scouting DM. */
+export function clubHeadlines(items: NewsItem[], clubId: string, max = 2): NewsItem[] {
+  const out: NewsItem[] = [];
+  const seenKeys = new Set<string>();
+  for (const it of [...items].sort((a, b) => Date.parse(b.published) - Date.parse(a.published))) {
+    if (out.length >= max) break;
+    if (clubOfHeadline(it) !== clubId) continue;
+    const k = headlineKey(it.headline);
+    if (seenKeys.has(k)) continue;
+    seenKeys.add(k);
+    out.push(it);
+  }
+  return out;
 }
 
 /**
@@ -267,38 +324,39 @@ export interface DigestSelection {
  * - club items first: anything tied to one of the sixteen
  * - then a little general football, but ONLY with ESPN's summary attached, so
  *   it arrives with context instead of as a headline about strangers
- * - de-duplicated by article id AND by headline, because the same story is
- *   syndicated into several league feeds
- * - nothing already sent on a previous night
+ * - de-duplicated by article id AND by headline key, within tonight's feeds
+ *   and against every previous night
  * - at most one item per club, so a busy Arsenal week cannot take the whole
  *   brief and leave the other fifteen unmentioned
  * - newest first
  */
 export function selectDigest(
   items: NewsItem[],
-  opts: { seenIds?: Iterable<string>; maxOurs?: number; maxGeneral?: number } = {},
+  opts: { seenIds?: Iterable<string>; seenKeys?: Iterable<string>; maxOurs?: number; maxGeneral?: number } = {},
 ): DigestSelection {
   const { maxOurs = 4, maxGeneral = 1 } = opts;
   const seen = new Set(opts.seenIds ?? []);
+  const seenKeys = new Set(opts.seenKeys ?? []);
 
-  // Collapse the same story across league feeds, COUNTING how many carried it.
-  // That count is the best available measure of how big the story is.
-  const byHeadline = new Map<string, NewsItem>();
+  // Collapse the same story across league feeds, COUNTING how many carried it
+  // and KEEPING every id it arrived under. The count measures how big the
+  // story is; the ids are what stop it coming back.
+  const byHeadline = new Map<string, { it: NewsItem; ids: string[] }>();
   for (const it of items) {
-    if (seen.has(it.id)) continue;
-    const key = it.headline.toLowerCase().replace(/\s+/g, ' ').trim();
+    const key = headlineKey(it.headline);
+    if (seen.has(it.id) || seenKeys.has(key)) continue;
     const prev = byHeadline.get(key);
-    if (prev) { prev.sources += 1; continue; }
-    byHeadline.set(key, { ...it, sources: 1 });
+    if (prev) { prev.it.sources += 1; if (!prev.ids.includes(it.id)) prev.ids.push(it.id); continue; }
+    byHeadline.set(key, { it: { ...it, sources: 1 }, ids: [it.id] });
   }
-  const byId = new Map<string, NewsItem>(
-    [...byHeadline.values()]
-      .sort((a, b) => (prominence(b) - prominence(a)) || (Date.parse(b.published) - Date.parse(a.published)))
-      .map((it) => [it.id, it]),
-  );
+
+  const ranked = [...byHeadline.values()]
+    .sort((a, b) => (prominence(b.it) - prominence(a.it)) || (Date.parse(b.it.published) - Date.parse(a.it.published)));
+  const allIds = new Map<string, string[]>(ranked.map((r) => [r.it.id, r.ids]));
+
   const ours: NewsItem[] = [];
   const usedClubs = new Set<string>();
-  for (const it of byId.values()) {
+  for (const { it } of ranked) {
     if (ours.length >= maxOurs) break;
     if (!it.clubIds.length) continue;
     const club = clubOfHeadline(it);
@@ -308,8 +366,16 @@ export function selectDigest(
   }
   // ELSEWHERE: one slot, and it has to earn it. ESPN's summary for context,
   // and a club or competition the group would actually recognise.
-  const general = [...byId.values()]
+  const general = ranked
+    .map((r) => r.it)
     .filter((it) => !it.clubIds.length && it.description.length > 20 && isMajorElsewhere(it.headline))
     .slice(0, maxGeneral);
-  return { ours, general, ids: [...ours, ...general].map((i) => i.id) };
+
+  const shown = [...ours, ...general];
+  return {
+    ours,
+    general,
+    ids: [...new Set(shown.flatMap((i) => allIds.get(i.id) ?? [i.id]))],
+    keys: [...new Set(shown.map((i) => headlineKey(i.headline)))],
+  };
 }

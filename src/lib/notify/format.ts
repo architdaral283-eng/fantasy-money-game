@@ -116,10 +116,6 @@ export interface FixtureNotice {
    */
   ownerAHtml?: string | null;
   ownerBHtml?: string | null;
-  h2h?: string | null;       // 'Anmol leads 3–1'
-  lastMeeting?: string | null; // 'Rematch: Arsenal 1–2 Real Madrid, Sat 24 Oct. Vedant took ₹500 off Archit.'
-  netA?: number | null;
-  netB?: number | null;
   mins?: number | null;      // prematch only
   sameOwner?: boolean;       // both clubs owned by the same player: no money moves
 }
@@ -144,20 +140,17 @@ export function buildFixtureNotice(n: FixtureNotice): string {
     ? `${a} owns both. Nothing moves.`
     : `${a} v ${b}\n${STAKE_LINE}`;
 
-  const context: string[] = [];
-  if (n.h2h) context.push(`Head to head: ${esc(n.h2h)}`);
-  if (n.lastMeeting) context.push(esc(n.lastMeeting));
-  if (typeof n.netA === 'number' && typeof n.netB === 'number') {
-    // Names only here: mentioning the same two men twice in one message
-    // notifies them twice and reads like the bot is shouting.
-    context.push(standingLine(n.ownerA, n.netA, n.ownerB, n.netB));
-  }
   const tail = n.kind === 'drawn' && !n.timeIST
     ? 'No date yet. It shows up in /next the moment the provider gives one.'
     : null;
 
-  // No taunt before a result. The roast lands when the money actually moves.
-  return block(header, subject, moneyBlock, context.join('\n'), tail);
+  // A reminder says what is happening and what it costs. Nothing else.
+  // Head to head, the last meeting and the money table used to ride along
+  // here; they are available on demand as /h2h, /nemesis and /standings, and
+  // in a reminder they were noise that buried the fixture.
+  //
+  // No taunt before a result either. The roast lands when the money moves.
+  return block(header, subject, moneyBlock, tail);
 }
 
 // ——————————————————————————— scorers ———————————————————————————
@@ -447,66 +440,70 @@ export function ordinal(n: number): string {
   return `${n}${d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th'}`;
 }
 
-export interface ScoutLine {
+export interface ScoutClub {
+  name: string;
   rank: number;
-  net: number;
-  aheadOf: string | null;
-  gapAhead: number | null;
-  behind: string | null;
-  gapBehind: number | null;
+  points: number;
+  played: number;
+  w: number;
+  d: number;
+  l: number;
+  gf: number;
+  ga: number;
 }
-
-/** '2nd, ₹500 behind Archit' — or the lead, when you are top. */
-function posText(l: ScoutLine): string {
-  if (l.rank === 1 && l.aheadOf && l.gapAhead !== null) {
-    return l.gapAhead === 0
-      ? `${ordinal(l.rank)}, level with ${esc(l.aheadOf)}`
-      : `${ordinal(l.rank)}, ${money(l.gapAhead)} clear of ${esc(l.aheadOf)}`;
-  }
-  if (l.behind && l.gapBehind !== null) {
-    return l.gapBehind === 0
-      ? `${ordinal(l.rank)}, level with ${esc(l.behind)}`
-      : `${ordinal(l.rank)}, ${money(l.gapBehind)} behind ${esc(l.behind)}`;
-  }
-  return ordinal(l.rank);
-}
-
+export interface ScoutNews { club: string; headline: string }
 export interface ScoutBrief {
-  whenLabel: string;          // 'Tomorrow, 01:30 IST'
+  whenLabel: string;          // 'Sat, 31 Oct, 23:00 IST'
   home: string;
   away: string;
   compId: string;
   compName?: string | null;
   yourClub: string;
-  opponent: string;           // the other owner's name
   theirClub: string;
-  oppForm: string;            // 'WWLDW' or '—'
-  oppPoints: number;
-  h2h: string;
-  lastMeeting?: string | null;
-  now: ScoutLine;
-  win: ScoutLine;
-  lose: ScoutLine;
+  opponent: string;           // the other owner's name
+  /** The opposition, in its own league. Null when ESPN gave nothing. */
+  theirs: ScoutClub | null;
+  /** Your club, same table, for comparison. */
+  mine: ScoutClub | null;
+  /** Injuries, bans, signings — for either club, in the last week. */
+  news: ScoutNews[];
 }
 
-/** Day-before DM to the two people with money on it. */
+/** ' 2nd · 20 pts from 9 · W6 D2 L1 · 22 scored, 9 conceded' */
+function scoutClubLines(c: ScoutClub): string {
+  const where = c.rank > 0 ? `${ordinal(c.rank)}` : 'unranked';
+  return [
+    ` ${where} · ${c.points} pt${c.points === 1 ? '' : 's'} from ${c.played}`,
+    ` W${c.w} D${c.d} L${c.l} · ${c.gf} scored, ${c.ga} conceded`,
+  ].join('\n');
+}
+
+/**
+ * The DM that goes to the two people with money on a fixture.
+ *
+ * It scouts the OPPOSITION CLUB. It used to scout the opposing player —
+ * their last five results in this game, the head to head, what the table
+ * would look like if you won — which told you nothing about the match you
+ * were about to watch, and all of which is a command away anyway.
+ */
 export function buildScoutBrief(s: ScoutBrief): string {
   const where = [compName(s.compId, s.compName), s.whenLabel].filter(Boolean).join(' · ');
-  const form = s.oppForm === '—'
-    ? `${esc(s.opponent)} has not played yet.`
-    : `${esc(s.opponent)}'s last five: ${esc(s.oppForm)}, ${s.oppPoints} point${s.oppPoints === 1 ? '' : 's'}`;
+
+  const them = s.theirs
+    ? `${esc(s.theirClub)} — ${esc(s.opponent)}\n${esc(scoutClubLines(s.theirs))}`
+    : `${esc(s.theirClub)} — ${esc(s.opponent)}\n No league table available.`;
+  const mine = s.mine ? `Your ${esc(s.yourClub)}\n${esc(scoutClubLines(s.mine))}` : null;
+
+  const news = s.news.length
+    ? ['Team news', ...s.news.map((n) => ` ${esc(n.club)} · ${esc(n.headline)}`)].join('\n')
+    : 'No team news for either club this week.';
 
   return block(
-    head('Scouting', s.whenLabel),
+    head('Scouting', s.theirClub),
     `${esc(s.home)} v ${esc(s.away)}\n${esc(where)}`,
-    `Your ${esc(s.yourClub)} against ${esc(s.opponent)}'s ${esc(s.theirClub)}.`,
-    [form, `Head to head: ${esc(s.h2h)}`, s.lastMeeting ? esc(s.lastMeeting) : null]
-      .filter(Boolean).join('\n'),
-    [
-      `You are ${posText(s.now)} on ${signed(s.now.net)}.`,
-      `Win and you are ${posText(s.win)}.`,
-      `Lose and you are ${posText(s.lose)}.`,
-    ].join('\n'),
+    them,
+    mine,
+    news,
     STAKE_LINE,
   );
 }

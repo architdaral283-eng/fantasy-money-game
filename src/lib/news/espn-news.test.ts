@@ -275,3 +275,92 @@ describe('a quiet day', () => {
     expect(picked.ids).not.toContain('b');
   });
 });
+
+// ———————————————————————————————————————————————————————————————————————
+// The Pulisic bug, 30 Oct 2026. The ELSEWHERE slot ran a story the group had
+// already been shown two nights earlier.
+//
+// Cause: ESPN syndicates one story into several league feeds, each with its
+// OWN article id. selectDigest collapsed them by headline and reported only
+// the winning copy's id, so the other ids were never remembered. Once the
+// digest widened its window to 48 or 72 hours on a quiet day, a surviving
+// copy walked back in.
+// ———————————————————————————————————————————————————————————————————————
+describe('a story never comes back', () => {
+  const item = (id: string, headline: string, extra: Partial<NewsItem> = {}): NewsItem => ({
+    id,
+    headline,
+    description: 'The United States winger has agreed fresh terms at the San Siro through 2029.',
+    published: '2026-10-28T18:00:00Z',
+    clubIds: [],
+    prominent: false,
+    mentions: 3,
+    sources: 1,
+    ...extra,
+  });
+
+  const PULISIC = 'Pulisic signs new Milan contract until 2029';
+
+  it('remembers every id a syndicated story arrived under, not just the winner', () => {
+    // The same story, carried by three league feeds under three ids.
+    const picked = selectDigest([
+      item('4501', PULISIC),
+      item('4502', PULISIC),
+      item('4503', PULISIC),
+    ]);
+    expect(picked.general).toHaveLength(1);
+    expect(picked.ids).toEqual(expect.arrayContaining(['4501', '4502', '4503']));
+  });
+
+  it('blocks a copy whose id was never seen, on the headline alone', () => {
+    const first = selectDigest([item('4501', PULISIC)]);
+    // Two nights later, the window widens and a different feed's copy survives.
+    const second = selectDigest([item('9999', PULISIC)], {
+      seenIds: first.ids,
+      seenKeys: first.keys,
+    });
+    expect(second.general).toHaveLength(0);
+  });
+
+  it('is not fooled by capitalisation or stray whitespace', () => {
+    const first = selectDigest([item('4501', PULISIC)]);
+    const second = selectDigest([item('9999', '  PULISIC  SIGNS   new Milan Contract until 2029 ')], {
+      seenIds: first.ids,
+      seenKeys: first.keys,
+    });
+    expect(second.general).toHaveLength(0);
+  });
+
+  it('still lets a genuinely different story through', () => {
+    const first = selectDigest([item('4501', PULISIC)]);
+    const second = selectDigest([
+      item('9999', 'Milan lose Leao for six weeks with a hamstring tear'),
+    ], { seenIds: first.ids, seenKeys: first.keys });
+    expect(second.general).toHaveLength(1);
+  });
+});
+
+// Found while fixing the repeat: every word-boundary entry in MAJOR_ELSEWHERE
+// was written '\\\\b' instead of '\\b', which compiles to a literal backslash
+// and matches nothing. Ten clubs and bodies were silently unrecognisable.
+describe('isMajorElsewhere word boundaries actually compile', () => {
+  it.each([
+    'Pulisic signs new Milan contract until 2029',
+    'PSG complete move for Zaire-Emery',
+    'Porto agree deal for a striker',
+    'Ajax sack their head coach',
+    'PSV reach the group stage',
+    'Lyon appoint a new manager',
+    'Monaco sign a defender',
+    'FIFA charges three federations',
+    'UEFA opens an investigation',
+    'Euros qualifying draw made',
+  ])('recognises %s', (headline) => {
+    expect(isMajorElsewhere(headline)).toBe(true);
+  });
+
+  it('still refuses football nobody in the group would recognise', () => {
+    expect(isMajorElsewhere('Espanyol sack their coach')).toBe(false);
+    expect(isMajorElsewhere('Cadiz appoint a sporting director')).toBe(false);
+  });
+});

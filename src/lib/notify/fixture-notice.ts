@@ -4,7 +4,6 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildFixtureNotice } from '@/lib/notify/format';
-import { h2hTally, h2hText, lastMeeting, lastMeetingText } from '@/lib/stats/h2h';
 import { mention } from '@/lib/notify/mention';
 
 export interface NoticeFixture {
@@ -35,13 +34,10 @@ export async function fixtureNotice(
   kind: 'tomorrow' | 'today' | 'prematch' | 'drawn',
   mins?: number,
 ): Promise<string> {
-  const [{ data: clubs }, { data: bal }, { data: comps }, { data: fx }, { data: wld }, { data: res }, { data: people }] = await Promise.all([
+  const [{ data: clubs }, { data: bal }, { data: comps }, { data: people }] = await Promise.all([
     db.from('clubs').select('id,name,owner_id'),
-    db.from('player_balances').select('id,name,net_inr'),
+    db.from('player_balances').select('id,name'),
     db.from('competitions').select('id,name').eq('id', f.competition_id),
-    db.from('fixtures').select('id,home_club_id,away_club_id,status,kickoff_utc').eq('status', 'RECORDED'),
-    db.from('wld_records').select('player_id,fixture_id,outcome'),
-    db.from('results').select('fixture_id,h90,a90'),
     // For the mention. telegram_chat_id IS the user id in a private chat.
     db.from('players').select('id,telegram_chat_id'),
   ]);
@@ -50,41 +46,14 @@ export async function fixtureNotice(
     .map((p) => [p.id, p.telegram_chat_id]));
 
   const cmap = new Map(((clubs ?? []) as { id: string; name: string; owner_id: string }[]).map((c) => [c.id, c]));
-  const bmap = new Map(((bal ?? []) as { id: string; name: string; net_inr: number }[]).map((b) => [b.id, { name: b.name, net: Number(b.net_inr) }]));
+  const bmap = new Map(((bal ?? []) as { id: string; name: string }[]).map((b) => [b.id, { name: b.name }]));
   const home = cmap.get(f.home_club_id);
   const away = cmap.get(f.away_club_id);
   const oa = home?.owner_id ?? '';
   const ob = away?.owner_id ?? '';
   const aName = bmap.get(oa)?.name ?? oa ?? '?';
   const bName = bmap.get(ob)?.name ?? ob ?? '?';
-  const netA = bmap.get(oa)?.net ?? 0;
-  const netB = bmap.get(ob)?.net ?? 0;
-
-  const tally = h2hTally(
-    oa, ob,
-    ((fx ?? []) as { id: string; home_club_id: string; away_club_id: string; status: string }[]),
-    (id) => cmap.get(id)?.owner_id,
-    ((wld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[]),
-  );
-
   const sameOwner = oa !== '' && oa === ob;
-
-  // What happened the last time these two played each other for money. The
-  // record ("Vedant leads 3-1") is a number; this is the grudge.
-  const prev = sameOwner ? null : lastMeeting(
-    oa, ob,
-    ((fx ?? []) as { id: string; home_club_id: string; away_club_id: string; status: string; kickoff_utc: string | null }[]),
-    (id) => cmap.get(id)?.owner_id,
-    ((wld ?? []) as { player_id: string; fixture_id: string | null; outcome: string }[]),
-    ((res ?? []) as { fixture_id: string; h90: number; a90: number }[]),
-  );
-  // Exclude the fixture being announced: a re-sent reminder must not report
-  // the match it is reminding you about as history.
-  const history = prev && prev.fixtureId !== f.id ? prev : null;
-  const samePair = history
-    ? new Set([history.homeClubId, history.awayClubId]).size === 2
-      && [history.homeClubId, history.awayClubId].every((c) => c === f.home_club_id || c === f.away_club_id)
-    : false;
 
   return buildFixtureNotice({
     kind,
@@ -99,18 +68,6 @@ export async function fixtureNotice(
     ownerB: bName,
     ownerAHtml: mention(aName, chatOf.get(oa)),
     ownerBHtml: mention(bName, chatOf.get(ob)),
-    h2h: sameOwner ? null : h2hText(aName, bName, tally),
-    lastMeeting: history
-      ? lastMeetingText(
-          history,
-          (id) => cmap.get(id)?.name ?? id,
-          (id) => bmap.get(id)?.name ?? id,
-          history.at ? dateFmt.format(new Date(history.at)) : null,
-          samePair,
-        )
-      : null,
-    netA: sameOwner ? null : netA,
-    netB: sameOwner ? null : netB,
     mins: mins ?? null,
     sameOwner,
   });

@@ -44,11 +44,19 @@ describe('fixture notice', () => {
     expect(t).toContain('La Liga · Sun 26 Oct');
     expect(t).toContain('Anmol v Vedant');
     expect(t).toContain('₹500 on it. ₹1,000 if it is won by four.');
-    expect(t).toContain('Head to head: Anmol leads 3–1');
-    expect(t).toContain('Table: Anmol +₹1,500 · Vedant −₹500');
     // the old one-liner's tells, all gone
     expect(t).not.toContain('(laliga)');
     expect(t).not.toContain('₹1000');
+  });
+  it('carries no head to head, last meeting or money table', () => {
+    // A reminder says what is happening and what it costs. The rest is on
+    // demand: /h2h, /nemesis, /standings. It used to ride along here and
+    // buried the fixture under three lines nobody asked for.
+    const t = buildFixtureNotice({ ...base, kind: 'tomorrow' });
+    expect(t).not.toContain('Head to head');
+    expect(t).not.toContain('Last meeting');
+    expect(t).not.toContain('Table:');
+    expect(t.split('\n').filter((l) => l.trim() !== '')).toHaveLength(5);
   });
   it('says nothing moves when one player owns both clubs', () => {
     const t = buildFixtureNotice({ ...base, kind: 'tomorrow', ownerB: 'Anmol', sameOwner: true });

@@ -16,7 +16,7 @@ import { silentPlayers, silenceObservable } from '@/lib/stats/silence';
 import { CHATTER_KEY } from '@/lib/notify/quiet';
 import { PLAYERS } from '@/lib/stats/weekly';
 import { istDay } from '@/lib/notify/fixture-notice';
-import { NEWS_LEAGUES, parseNews, selectDigest, type NewsItem } from '@/lib/news/espn-news';
+import { NEWS_LEAGUES, fetchLeagueNews, parseNews, selectDigest, type NewsItem } from '@/lib/news/espn-news';
 
 export const maxDuration = 60;
 
@@ -26,30 +26,8 @@ function authed(req: Request): boolean {
   return req.headers.get('authorization') === `Bearer ${secret}`;
 }
 
-const BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 const SEEN_KEY = 'digest_seen_ids';
 const SEEN_CAP = 400;
-
-/**
- * Raw feed, parsed later — because it may need parsing TWICE against
- * different windows. On 29 Oct the brief came out as a single headline: a
- * Thursday with no football, a strict 24-hour window, and the four stories
- * already used the night before. Nothing was broken; there was simply
- * nothing inside the window it was allowed to look at.
- */
-async function leagueJson(lg: string, timeoutMs = 8000): Promise<unknown> {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
-  try {
-    const r = await fetch(`${BASE}/${lg}/news?limit=25`, { signal: ctl.signal, cache: 'no-store' });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 export async function POST(req: Request) {
   if (!authed(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -59,9 +37,15 @@ export async function POST(req: Request) {
 
   // Headlines already shown on a previous night never come back.
   const { data: seenCfg } = await db.from('config').select('value').eq('key', SEEN_KEY).maybeSingle();
-  const seenIds: string[] = ((seenCfg?.value as { ids?: string[] } | null)?.ids ?? []).filter((x) => typeof x === 'string');
+  const seenVal = seenCfg?.value as { ids?: string[]; keys?: string[] } | null;
+  const str = (xs: unknown): string[] => (Array.isArray(xs) ? xs : []).filter((x): x is string => typeof x === 'string');
+  const seenIds = str(seenVal?.ids);
+  // Headline keys, not just ids: ESPN gives the same story a different article
+  // id in every league feed it syndicates to, so an id alone does not identify
+  // a story. Rows written before this existed simply have no keys yet.
+  const seenKeys = str(seenVal?.keys);
 
-  const feeds = await Promise.all(NEWS_LEAGUES.map((lg) => leagueJson(lg)));
+  const feeds = await Promise.all(NEWS_LEAGUES.map((lg) => fetchLeagueNews(lg)));
   if (feeds.every((f) => f === null)) errors.push('espn news: every league returned nothing');
 
   const parseAll = (hours: number): NewsItem[] =>
@@ -73,10 +57,10 @@ export async function POST(req: Request) {
   // cannot repeat anything: seenIds still excludes everything already used.
   let windowHours = 24;
   let items = parseAll(windowHours);
-  let picked = selectDigest(items, { seenIds });
+  let picked = selectDigest(items, { seenIds, seenKeys });
   if (picked.ours.length < 3) {
     for (const hours of [48, 72]) {
-      const wider = selectDigest(parseAll(hours), { seenIds });
+      const wider = selectDigest(parseAll(hours), { seenIds, seenKeys });
       if (wider.ours.length > picked.ours.length) {
         picked = wider;
         items = parseAll(hours);
@@ -143,8 +127,11 @@ export async function POST(req: Request) {
   await sendGroup(db, text, { urgent: true });
 
   // Remember what went out, newest first, capped.
-  const nextSeen = [...picked.ids, ...seenIds].slice(0, SEEN_CAP);
-  await db.from('config').upsert({ key: SEEN_KEY, value: { ids: nextSeen } }, { onConflict: 'key' });
+  const nextSeen = {
+    ids: [...new Set([...picked.ids, ...seenIds])].slice(0, SEEN_CAP),
+    keys: [...new Set([...picked.keys, ...seenKeys])].slice(0, SEEN_CAP),
+  };
+  await db.from('config').upsert({ key: SEEN_KEY, value: nextSeen }, { onConflict: 'key' });
 
   return NextResponse.json({ ok: true, scanned: items.length, windowHours, ours: ours.length, general: general.length, silence: silence !== null, errors });
 }
