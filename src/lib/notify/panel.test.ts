@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPinText, buildBriefText } from '@/lib/notify/panel';
+import { buildPinText } from '@/lib/notify/panel';
 
 describe('pinned panel text', () => {
   it('renders table, zero-sum ring line, next fixture', () => {
@@ -26,22 +26,5 @@ describe('pinned panel text', () => {
   it('shows the lock line when sums break', () => {
     const t = buildPinText([{ name: 'Archit', net: 100, w: 1, l: 0, d: 0 }], 1, 63, null, '21:14');
     expect(t).toContain('Ledger locked');
-  });
-});
-
-describe('matchday brief', () => {
-  it('lists fixtures with stakes and totals', () => {
-    const t = buildBriefText([
-      { home: 'Atletico', away: 'Bayern', compId: 'ucl', ownerA: 'Archit', ownerB: 'Harshal', whenIST: '00:30' },
-      { home: 'Inter', away: 'Napoli', compId: 'seriea', ownerA: 'Anmol', ownerB: 'Vedant', whenIST: '22:00' },
-    ]);
-    expect(t).toContain('TODAY · 2 counted fixtures');
-    expect(t).toContain('Archit v Harshal · UCL');
-    expect(t).toContain('₹1,000 in play. ₹2,000 if they all go big.');
-    expect(t).not.toMatch(/\bucl\b/);
-  });
-
-  it('empty day renders nothing', () => {
-    expect(buildBriefText([])).toBe('');
   });
 });

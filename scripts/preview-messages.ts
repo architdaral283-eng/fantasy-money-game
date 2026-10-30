@@ -3,7 +3,7 @@
 import {
   buildFixtureNotice, buildFixtureList, buildLedgerList, buildTrophies, buildSettle, buildHelp, buildRules,
 } from '../src/lib/notify/format';
-import { buildBriefText, buildPinText } from '../src/lib/notify/panel';
+import { buildPinText } from '../src/lib/notify/panel';
 
 const show = (title: string, body: string) => {
   console.log('\n' + '─'.repeat(60));
@@ -21,10 +21,6 @@ const fixture = {
 show('REMINDER — day before', buildFixtureNotice({ ...fixture, kind: 'tomorrow'}));
 show('PRE-MATCH — 30 minutes', buildFixtureNotice({ ...fixture, kind: 'prematch', mins: 28}));
 show('CUP TIE DRAWN — no date yet', buildFixtureNotice({ ...fixture, kind: 'drawn', compId: 'facup', timeIST: null, dateIST: null, round: 'Quarter-final'}));
-show('09:00 BRIEF', buildBriefText([
-  { home: 'Barcelona', away: 'Real Madrid', compId: 'laliga', ownerA: 'Anmol', ownerB: 'Vedant', whenIST: '01:30' },
-  { home: 'Arsenal', away: 'Inter', compId: 'ucl', ownerA: 'Archit', ownerB: 'Harshal', whenIST: '23:15' },
-]));
 show('/next and /fixtures', buildFixtureList([
   { home: 'Barcelona', away: 'Real Madrid', compId: 'laliga', ownerA: 'Anmol', ownerB: 'Vedant', timeIST: '01:30', dateIST: 'Sun 26 Oct' },
   { home: 'Arsenal', away: 'Inter', compId: 'ucl', ownerA: 'Archit', ownerB: 'Harshal', timeIST: '23:15', dateIST: 'Sun 26 Oct' },

@@ -4,12 +4,14 @@ name: poll-matchdays
 # Every 5 min from 16:30 IST to 05:25 IST (11:00–23:55 UTC), covering evening
 # kickoffs through late UCL finishes plus provider lag; silent the rest of the
 # day. The poller itself skips provider calls when no fixture is near kickoff,
-# so most ticks are DB-only. The matchday brief runs once at 09:00 IST (03:30 UTC).
+# so most ticks are DB-only. The second schedule (03:30 UTC) is a heartbeat only.
 #
-# The `poll` job deliberately has no `if:` guard, so it also runs on the 03:30
-# UTC brief tick. That extra run is DB-only (nothing is near kickoff at 09:00
-# IST), may front-load the daily schedule sync into dead time, and doubles as a
-# daily "is the poller reachable and not gated?" heartbeat. Leave it.
+# The 03:30 UTC tick once carried the 09:00 IST matchday brief, removed in
+# migration 0032 as a duplicate of the 24-hour fixture reminder. KEEP THE TICK.
+# The `poll` job has no `if:` guard, so it runs on it too: that run is DB-only
+# (nothing is near kickoff at 09:00 IST), front-loads the daily schedule sync
+# into dead time, and is the daily "is the poller reachable and not gated?"
+# heartbeat. Delete the tick and that proof goes with it.
 #
 # FAILURE = EMAIL + TELEGRAM DM. Both steps fail loudly when the endpoint returns
 # a non-2xx status, an empty/non-JSON body, `ok:false`, or a non-empty `errors`
@@ -102,57 +104,6 @@ jobs:
           code="$(cat "$RUNNER_TEMP/http_code" 2>/dev/null)" || code="no response"
           snippet="$(head -c 400 "$RUNNER_TEMP/body" 2>/dev/null | tr -d '\r')" || snippet=""
           text="$(printf '🚨 poll-matchdays / %s: %s\nHTTP %s\n%s\n%s' "$JOB" "$headline" "$code" "${snippet:-(no response body captured — see run log)}" "$RUN_URL")"
-          curl -sS --max-time 20 -o /dev/null "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-            --data-urlencode "chat_id=$TELEGRAM_ALERT_CHAT_ID" \
-            --data-urlencode "text=$text" \
-            --data-urlencode 'link_preview_options={"is_disabled":true}' \
-            && echo "Telegram alert sent." \
-            || echo "::warning::Telegram alert could not be sent (wrong bot token / chat id, or api.telegram.org unreachable)"
-          exit 0
-
-  brief:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # only the 03:30 tick (or a manual run) sends the brief
-    if: github.event.schedule == '30 3 * * *' || github.event_name == 'workflow_dispatch'
-    steps:
-      - name: POST /api/cron/brief (fails on non-2xx or ok:false)
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-        run: |
-          [ -n "$APP_URL" ] && [ -n "$CRON_SECRET" ] || { echo "::error::APP_URL / CRON_SECRET repository secrets are not set"; exit 1; }
-          body="$RUNNER_TEMP/body"   # fixed path: the Telegram alert step below reads it
-          code="$(curl -sS --max-time 300 -o "$body" -w '%{http_code}' -X POST "$APP_URL/api/cron/brief" \
-                    -H "Authorization: Bearer $CRON_SECRET")" \
-            || { echo "::error::curl could not reach $APP_URL/api/cron/brief"; exit 1; }
-          echo "$code" > "$RUNNER_TEMP/http_code"
-          echo "HTTP $code"; cat "$body"; echo
-          case "$code" in
-            2??) ;;
-            *) echo "::error::/api/cron/brief returned HTTP $code — the brief is NOT running (check CRON_SECRET / APP_URL / Vercel logs)"; exit 1 ;;
-          esac
-          [ -s "$body" ] || { echo "::error::/api/cron/brief returned an empty body"; exit 1; }
-          # {"ok":true,"brief":false} (no fixtures today) is a pass; {"ok":false,"reason":...} is a failure.
-          jq -e '.ok == true and ((.errors // []) | length == 0)' "$body" >/dev/null \
-            || { echo "::error::/api/cron/brief answered 2xx but reported a problem (ok != true, or body not JSON)"; exit 1; }
-
-      - name: Telegram DM alert (silent if TELEGRAM_BOT_TOKEN / TELEGRAM_ALERT_CHAT_ID unset)
-        if: failure()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_ALERT_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          JOB: ${{ github.job }}
-        run: |
-          # Runs once a day, so no repeat suppression. Must never fail (see poll job).
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_ALERT_CHAT_ID" ]; then
-            echo "::notice::No Telegram alert sent — add TELEGRAM_BOT_TOKEN and TELEGRAM_ALERT_CHAT_ID repository secrets to get failures as a DM."
-            exit 0
-          fi
-          code="$(cat "$RUNNER_TEMP/http_code" 2>/dev/null)" || code="no response"
-          snippet="$(head -c 400 "$RUNNER_TEMP/body" 2>/dev/null | tr -d '\r')" || snippet=""
-          text="$(printf '🚨 poll-matchdays / %s: FAILED (the 09:00 IST matchday brief did not go out)\nHTTP %s\n%s\n%s' "$JOB" "$code" "${snippet:-(no response body captured — see run log)}" "$RUN_URL")"
           curl -sS --max-time 20 -o /dev/null "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
             --data-urlencode "chat_id=$TELEGRAM_ALERT_CHAT_ID" \
             --data-urlencode "text=$text" \

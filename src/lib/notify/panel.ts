@@ -1,9 +1,9 @@
-// Pinned panel + matchday brief text builders — pure, tested.
+// Pinned panel text builder — pure, tested.
 // HTML parse mode with <pre> so columns align in every client. No Markdown:
 // club names with underscores would break it.
 // House style and the shared primitives live in format.ts.
 
-import { block, head, pre, esc, money, padR, compShort, STAKE_LINE } from '@/lib/notify/format';
+import { STAKE_LINE } from '@/lib/notify/format';
 
 export interface StandingRow { name: string; net: number; w: number; l: number; d: number }
 export interface NextFixture { home: string; away: string; ownerA: string; ownerB: string; whenIST: string; inText?: string | null }
@@ -69,21 +69,4 @@ export function buildPinText(
   }
   lines.push(``, `updated ${updatedIST} IST`);
   return lines.join('\n');
-}
-
-export interface BriefFixture { home: string; away: string; compId: string; comp?: string | null; ownerA: string; ownerB: string; whenIST: string }
-
-/** 09:00 IST matchday brief. Same shape as /next, one day's worth. */
-export function buildBriefText(fixtures: BriefFixture[]): string {
-  if (fixtures.length === 0) return '';
-  const body = fixtures.map((f) => [
-    ` ${padR(f.whenIST, 5)}  ${f.home} v ${f.away}`,
-    `        ${f.ownerA} v ${f.ownerB} · ${compShort(f.compId, f.comp)}`,
-  ].join('\n')).join('\n\n');
-  const base = fixtures.length * 500;
-  return block(
-    head('Today', `${fixtures.length} counted fixture${fixtures.length > 1 ? 's' : ''}`),
-    pre(esc(body)),
-    `${money(base)} in play. ${money(base * 2)} if they all go big.`,
-  );
 }
