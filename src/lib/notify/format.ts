@@ -817,3 +817,31 @@ export function buildPostponed(n: PostponedNotice): string {
     tail,
   );
 }
+
+export interface PositionLine { rank: number; club: string; owner: string; points: number }
+export interface PositionBlock { label: string; lines: PositionLine[] }
+
+/**
+ * Where the sixteen clubs sit, league by league. Monthly only: it is thirty
+ * lines, and it goes out as its own message rather than a photo caption,
+ * because Telegram caps a caption at 1024 characters.
+ *
+ * A rank of 0 means ESPN has not computed one — printed as a dash rather
+ * than as a confident "0th".
+ */
+export function buildPositions(blocks: PositionBlock[], label: string): string | null {
+  if (!blocks.length) return null;
+  const body = blocks
+    .map((b) => [
+      b.label,
+      ...b.lines.map((l) =>
+        `${padL(l.rank > 0 ? String(l.rank) : '–', 2)}  ${padR(l.club, 18)} ${padR(l.owner, 8)}${padL(String(l.points), 3)}`),
+    ].join('\n'))
+    .join('\n\n');
+
+  return block(
+    head('Positions', label),
+    pre(esc(body)),
+    'League position and points as they stand this morning.',
+  );
+}

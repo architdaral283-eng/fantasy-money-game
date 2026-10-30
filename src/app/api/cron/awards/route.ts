@@ -14,6 +14,7 @@ import { groupId } from '@/lib/notify/send';
 import { buildMonthlyAwards } from '@/lib/notify/format';
 import { monthlyAwards, monthBounds, type MonthLedgerRow } from '@/lib/awards/monthly';
 import { describeFixture } from '@/lib/ledger/effective';
+import { positionsMessage } from '@/lib/notify/positions';
 import { PLAYERS, SEASON_START } from '@/lib/stats/weekly';
 
 export const maxDuration = 60;
@@ -115,5 +116,19 @@ export async function POST(req: Request) {
     await sendGroup(db, caption, { urgent: true });
   }
 
-  return NextResponse.json({ ok: true, period: season ? 'season' : 'month', label: bounds.label, moved: a.moved, results: a.results, image });
+  // Where the sixteen clubs actually sit — its own message, not part of the
+  // caption above. Telegram caps a photo caption at 1024 characters and this
+  // is thirty lines; folded in, it would fail the whole monthly send.
+  let positions = false;
+  try {
+    const board = await positionsMessage(db, bounds.label);
+    if (board) {
+      await sendGroup(db, board, { urgent: true });
+      positions = true;
+    }
+  } catch {
+    // ESPN being down costs the table, not the awards.
+  }
+
+  return NextResponse.json({ ok: true, period: season ? 'season' : 'month', label: bounds.label, moved: a.moved, results: a.results, image, positions });
 }
