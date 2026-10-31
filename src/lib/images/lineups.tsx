@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import { INK, PAPER } from '@/lib/images/recap';
+import type { LineupSlot } from '@/lib/providers/espn-lineups';
 
 /**
  * Both teams on a pitch, in their actual shape, posted to the group with the
@@ -21,8 +22,10 @@ export interface LineupSide {
   club: string;
   owner: string;
   formation: string | null;
-  /** Starting eleven in ESPN's order: keeper first. */
+  /** Starting eleven in ESPN's order. Used only as a fallback for `slots`. */
   xi: string[];
+  /** The eleven with position data. Preferred: ESPN's order is not positional. */
+  slots?: LineupSlot[];
   /** Set when this club's best player is missing from the eleven. */
   missing: string | null;
 }
@@ -49,6 +52,66 @@ export function lineupSize(): { width: number; height: number } {
  * with a sending-off already in it, or a formation string ESPN did not
  * publish, must still draw something rather than crash or drop players.
  */
+/**
+ * Where a player belongs on the pitch, from his ESPN position.
+ *
+ * 0 keeper · 1 defence · 2 midfield · 3 attack. Anything unrecognised is
+ * midfield, which is the least wrong place to guess.
+ */
+export function positionRank(pos: string | null): 0 | 1 | 2 | 3 {
+  const p = (pos ?? '').trim().toUpperCase();
+  if (!p) return 2;
+  if (p === 'G' || p === 'GK') return 0;
+  // 'D' and the back-four abbreviations. 'DM' is a midfielder and must not
+  // match here, which is why these are anchored rather than prefix tests.
+  if (p === 'D' || /^[CLR]?B$/.test(p) || /^[LR]WB$/.test(p) || p === 'SW') return 1;
+  if (p === 'F' || /^(ST|CF|SS|LW|RW|LF|RF)$/.test(p)) return 3;
+  return 2;
+}
+
+/**
+ * The eleven, arranged the way they actually line up.
+ *
+ * THE BUG THIS FIXES. The card used to take ESPN's roster array at face
+ * value — keeper = xi[0], then fill the formation rows in order. ESPN's
+ * roster order is not positional, so on 31 Oct Harry Kane was drawn at
+ * number 10 and a centre-back was drawn at left-back.
+ *
+ * Two routes, best first:
+ *  - every outfielder carries ESPN's own `formationPlace`: trust it entirely,
+ *    and the drawing matches ESPN's own graphic exactly;
+ *  - otherwise sort by position group, so defenders occupy the back row and
+ *    forwards the front one. Order WITHIN a row is then still ESPN's, which
+ *    is the best available guess and no worse than before.
+ */
+export function orderXI(
+  slots: LineupSlot[],
+  formation: string | null,
+): { keeper: string; rows: string[][] } {
+  const eleven = slots.slice(0, 11);
+  const keeperAt = eleven.findIndex((p) => positionRank(p.pos) === 0);
+  const keeper = eleven[keeperAt >= 0 ? keeperAt : 0];
+  const outfield = eleven.filter((_, i) => i !== (keeperAt >= 0 ? keeperAt : 0));
+
+  const everyPlace = outfield.length > 0 && outfield.every((p) => typeof p.place === 'number');
+  const ordered = everyPlace
+    ? [...outfield].sort((a, b) => (a.place ?? 0) - (b.place ?? 0))
+    : [...outfield].sort((a, b) => positionRank(a.pos) - positionRank(b.pos)); // stable: ESPN's order kept within a band
+
+  // No outfielders means no rows. Without this the fallback in
+  // outfieldRows() still yields one band and the card draws an empty stripe.
+  if (ordered.length === 0) return { keeper: keeper?.name ?? '', rows: [] };
+
+  const counts = outfieldRows(formation, ordered.length);
+  const rows: string[][] = [];
+  let i = 0;
+  for (const n of counts) {
+    rows.push(ordered.slice(i, i + n).map((p) => p.name));
+    i += n;
+  }
+  return { keeper: keeper?.name ?? '', rows };
+}
+
 export function outfieldRows(formation: string | null, outfield: number): number[] {
   const parsed = (formation ?? '').split('-').map((n) => Number(n.trim())).filter((n) => Number.isInteger(n) && n > 0);
   if (parsed.length >= 2 && parsed.reduce((a, b) => a + b, 0) === outfield) return parsed;
@@ -73,20 +136,18 @@ function playerDot(name: string, shirt: string, key: string): ReactElement {
 
 /** One team's rows, already ordered from their own goal outward. */
 function teamRows(s: LineupSide, shirt: string, idPrefix: string): ReactElement[] {
-  const xi = s.xi.slice(0, 11);
-  const keeper = xi[0] ?? '';
-  const outfield = xi.slice(1);
-  const rows = outfieldRows(s.formation, outfield.length);
+  // Fall back to bare names only when the caller had no position data at all.
+  const slots: LineupSlot[] = s.slots?.length
+    ? s.slots
+    : s.xi.slice(0, 11).map((name, i) => ({ name, pos: i === 0 ? 'G' : null, place: null }));
+  const { keeper, rows } = orderXI(slots, s.formation);
 
   const out: ReactElement[] = [
     <div key={`${idPrefix}-gk`} style={{ display: 'flex', justifyContent: 'center', width: '100%', padding: '7px 0' }}>
       {playerDot(keeper, shirt, `${idPrefix}-gk-p`)}
     </div>,
   ];
-  let i = 0;
-  rows.forEach((n, r) => {
-    const band = outfield.slice(i, i + n);
-    i += n;
+  rows.forEach((band, r) => {
     out.push(
       <div key={`${idPrefix}-r${String(r)}`} style={{ display: 'flex', justifyContent: 'space-around', width: '100%', padding: '7px 0' }}>
         {band.map((p, c) => playerDot(p, shirt, `${idPrefix}-r${String(r)}-c${String(c)}`))}

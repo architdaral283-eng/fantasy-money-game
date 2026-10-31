@@ -8,11 +8,22 @@
 
 import { CLUB_BY_ESPN } from '@/lib/providers/espn';
 
+/** One starter, with whatever ESPN told us about where he plays. */
+export interface LineupSlot {
+  name: string;
+  /** ESPN's position abbreviation: 'G', 'D', 'M', 'F', sometimes finer. */
+  pos: string | null;
+  /** ESPN's own slot number within the formation, when it sends one. */
+  place: number | null;
+}
+
 export interface Lineup {
   clubId: string;
   formation: string | null;
-  /** Starting eleven, in the order ESPN lists them: keeper first. */
+  /** Starting eleven, in the order ESPN lists them. NOT positional order. */
   xi: string[];
+  /** The same eleven with position data. What the pitch card draws from. */
+  slots: LineupSlot[];
   bench: number;
 }
 
@@ -23,6 +34,7 @@ interface RawRoster {
     starter?: boolean;
     athlete?: { displayName?: string; shortName?: string };
     position?: { abbreviation?: string };
+    formationPlace?: number | string;
   }[];
 }
 
@@ -39,12 +51,21 @@ export function parseLineups(json: unknown): Lineup[] {
       // An unpublished lineup comes back as an empty roster, or as a squad
       // with nobody flagged as a starter. Both mean "not yet", not "nobody".
       if (starters.length < 11) continue;
+      const slots: LineupSlot[] = starters
+        .map((p) => {
+          const place = Number(p.formationPlace);
+          return {
+            name: p.athlete?.shortName || p.athlete?.displayName || '',
+            pos: p.position?.abbreviation ? String(p.position.abbreviation) : null,
+            place: Number.isFinite(place) && place > 0 ? place : null,
+          };
+        })
+        .filter((p) => p.name !== '');
       out.push({
         clubId,
         formation: r.formation ? String(r.formation) : null,
-        xi: starters
-          .map((p) => p.athlete?.shortName || p.athlete?.displayName || '')
-          .filter((n) => n !== ''),
+        xi: slots.map((p) => p.name),
+        slots,
         bench: squad.length - starters.length,
       });
     } catch { /* one malformed roster never sinks the other */ }

@@ -42,6 +42,25 @@ export async function GET(req: Request) {
   const lineups = await espnLineups(f.competition_id, match.espnId);
   if (lineups.length < 2) return new Response('lineups not published', { status: 404 });
 
+  // ?debug=1 returns what ESPN actually sent, no image.
+  //
+  // It exists for one open question: whether this feed carries
+  // `formationPlace`. With it, the card matches ESPN's own graphic exactly;
+  // without it, players are grouped into the right rows but the left-to-right
+  // order inside a row is only ESPN's roster order. Checking needs a match
+  // with published lineups, so the app has to answer it rather than me.
+  if (new URL(req.url).searchParams.get('debug') === '1') {
+    return Response.json({
+      espnId: match.espnId,
+      hasFormationPlace: lineups.every((l) => l.slots.every((p) => p.place !== null)),
+      lineups: lineups.map((l) => ({
+        clubId: l.clubId,
+        formation: l.formation,
+        slots: l.slots,
+      })),
+    });
+  }
+
   const [{ data: clubs }, { data: bal }, { data: doss }, { data: derbies }, { data: comps }, { data: played }, { data: wld }] =
     await Promise.all([
       db.from('clubs').select('id,name,owner_id'),
@@ -70,6 +89,7 @@ export async function GET(req: Request) {
       owner: pname(club.owner_id),
       formation: l?.formation ?? null,
       xi: l?.xi ?? [],
+      slots: l?.slots ?? [],
       missing: star && l && !inXI(l.xi, star) ? star : null,
     };
   };
