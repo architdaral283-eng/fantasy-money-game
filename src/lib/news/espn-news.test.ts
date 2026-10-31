@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseNews, selectDigest, isFirstTeamFootball, newsPriority, clubOfHeadline, isMajorElsewhere, prominence, NEWS_LEAGUES, type NewsItem } from '@/lib/news/espn-news';
+import { parseNews, selectDigest, isFirstTeamFootball, newsPriority, worthPrinting, clubOfHeadline, isMajorElsewhere, prominence, NEWS_LEAGUES, type NewsItem } from '@/lib/news/espn-news';
 import { buildDigestText } from '@/lib/notify/format';
 
 const NOW = Date.parse('2026-10-28T18:00:00Z');
@@ -44,39 +44,65 @@ describe('parsing ESPN news', () => {
     expect(parseNews({ articles: [{}, { type: 'Story' }] }, NOW)).toEqual([]);
   });
 
-  it('throws out the three shapes of filler a daily feed is made of', () => {
-    // all three came out of the live feed and all three read as generic
-    expect(newsPriority('Transfer rumors, news: Arsenal, Chelsea, City tracking Doué')).toBe(2);
-    expect(newsPriority('Why Real Madrid\'s Mbappé lost the Ballon d\'Or')).toBe(2);
-    expect(newsPriority('Yamal excited despite Ballon d\'Or miss: Good things take time')).toBe(2);
-    expect(newsPriority('Arteta, Alonso, Iraola: three managers from one tiny club')).toBe(2);
-    // and these are what the brief is for
+  it('ranks the four topics first, filler last, and bans nothing', () => {
+    // Archit's four: injuries, transfers, players, managers. Plus discipline,
+    // which is what made the Man City verdict invisible when it was missing.
     expect(newsPriority("Kompany 'stable', could be away for weeks after collapse")).toBe(0);
     expect(newsPriority('Napoli sack their head coach')).toBe(0);
-    expect(newsPriority('Fleetwood Town knock Arsenal out of the League Cup')).toBe(0);
     expect(newsPriority('Mbappé ruled out for three weeks')).toBe(0);
-    expect(newsPriority('Liverpool linked with Dortmund midfielder Nmecha')).toBe(1);
+    expect(newsPriority('Liverpool linked with Dortmund midfielder Nmecha')).toBe(0);
+    expect(newsPriority('Man City guilty of all charges of Premier League financial breaches')).toBe(0);
+    expect(newsPriority('Man City verdict could lead to Premier League expulsion')).toBe(0);
+
+    // Filler still ranks last — but it is RANKED, not thrown away.
+    expect(newsPriority("Why Real Madrid's Mbappé lost the Ballon d'Or")).toBe(2);
+    expect(newsPriority('Arteta, Alonso, Iraola: three managers from one tiny club')).toBe(0); // 'managers'
+    expect(newsPriority('Fleetwood Town knock Arsenal out of the League Cup')).toBe(1);
   });
 
-  it('filler never reaches the brief at all', () => {
+  it('keeps the story the old allow-list threw away', () => {
+    // Four consecutive briefs never mentioned that Manchester City had been
+    // found guilty of 114 charges, because 'guilty', 'verdict', 'breaches'
+    // and 'expulsion' were not words on the event list. Nothing is excluded
+    // for its kind any more.
+    for (const h of [
+      'Man City guilty of all charges of Premier League financial breaches',
+      'Man City owners inflated revenue by £830m - Premier League breaches findings',
+      'Culture Secretary Lisa Nandy: Man City verdict could lead to Premier League expulsion',
+      "Man City CEO says Premier League verdict part of 'conspiracy'",
+      "Wayne Rooney wouldn't feel comfortable accepting a medal if Man City stripped of titles",
+    ]) {
+      expect(worthPrinting(h)).toBe(true);
+    }
+  });
+
+  it('a front-page event outranks a rumour column about the same club', () => {
+    const mk = (id: string, headline: string, prominent: boolean): NewsItem =>
+      ({ id, headline, description: '', clubIds: ['man-city'], published: new Date(NOW).toISOString(),
+         prominent, mentions: 4, sources: 1 });
+    const big = mk('a', 'Man City guilty of all charges of Premier League financial breaches', true);
+    const filler = mk('b', 'Transfer rumors, news: Man City tracking Doué', false);
+    expect(prominence(big)).toBeGreaterThan(prominence(filler));
+  });
+
+  it('a rumour column still reaches the brief when nothing else does', () => {
     const got = parseNews({ articles: [
       art({ id: 1, headline: 'Transfer rumors, news: City tracking Doué', categories: [team(382)] }),
-      art({ id: 2, headline: 'Napoli sack their head coach', categories: [team(114)] }),
     ] }, NOW);
-    expect(got.map((g) => g.id)).toEqual(['2']);
+    expect(got.map((g) => g.id)).toEqual(['1']);
   });
 
-  it('drops the under-18s, the women\'s team and the tabloid stuff', () => {
+  it("drops only the under-18s and the women's team", () => {
     // ESPN tags a youth story to the SENIOR club id, so team-id filtering
-    // alone let "Rooney's son scores for the under-18s" through.
+    // alone let "Rooney's son scores for the under-18s" through. This is the
+    // one exclusion left, and it is a mis-tag rather than a matter of taste.
     expect(isFirstTeamFootball("Wayne Rooney's son Kai scores 4 goals for Man United under-18s")).toBe(false);
     expect(isFirstTeamFootball('Arsenal Women win the WSL')).toBe(false);
     expect(isFirstTeamFootball('Barcelona academy graduate signs pro deal')).toBe(false);
-    expect(isFirstTeamFootball("Bruno Fernandes' home burgled during Man United loss")).toBe(false);
-    // the things Archit actually wants
+    // Off-pitch stories are no longer banned, only ranked last.
+    expect(isFirstTeamFootball("Bruno Fernandes' home burgled during Man United loss")).toBe(true);
     expect(isFirstTeamFootball('Kompany stable, could be away for weeks after collapse')).toBe(true);
     expect(isFirstTeamFootball('Liverpool tracking Dortmund midfielder Nmecha')).toBe(true);
-    expect(isFirstTeamFootball('Arsenal crash out of the League Cup to Fleetwood')).toBe(true);
   });
 
   it('filters the feed, not just the selection', () => {
@@ -87,13 +113,13 @@ describe('parsing ESPN news', () => {
     expect(got.map((g) => g.id)).toEqual(['2']);
   });
 
-  it('an event outranks interest, and interest outranks nothing', () => {
+  it('a topic story outranks one with no topic at all', () => {
     const mk2 = (id: string, club: string, headline: string, mins: number): NewsItem =>
       ({ id, headline, description: '', clubIds: [club], published: new Date(NOW - mins * 60000).toISOString(),
          prominent: false, mentions: 1, sources: 1 });
     const got = selectDigest([
-      mk2('i', 'inter', 'Inter linked with a striker', 5),       // newest, but only interest
-      mk2('e', 'bayern', 'Bayern sign Wirtz', 300),              // older, but done
+      mk2('i', 'inter', 'Inter unveil a new third kit', 5),       // newest, but about nothing
+      mk2('e', 'bayern', 'Bayern sign Wirtz', 300),               // older, but a transfer
     ], { maxOurs: 2 });
     expect(got.ours[0].headline).toBe('Bayern sign Wirtz');
   });

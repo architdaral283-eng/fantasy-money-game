@@ -65,73 +65,86 @@ const NOT_FIRST_TEAM = /\b(under[- ]?\d{2}s?|u-?1[5-9]s?|u-?2[0-3]s?|youth|acade
 // Tabloid stories about footballers rather than football.
 const OFF_PITCH = /\b(burgl\w*|break-?in|divorce|wedding|girlfriend|nightclub)\b/i;
 
-/** Transfers, managers, injuries, first-team matters. Not the under-18s. */
+/** First-team football. The under-18s and the women's side are different clubs. */
 export function isFirstTeamFootball(headline: string): boolean {
-  return !NOT_FIRST_TEAM.test(headline) && !OFF_PITCH.test(headline);
+  return !NOT_FIRST_TEAM.test(headline);
 }
 
 // ———————————————————————————————————————————————————————————————————————
-// What earns a slot.
+// What earns a slot. REWRITTEN 31 Oct 2026.
 //
-// The first version of this ranked on keywords — "transfer", "manager" — and
-// the live result was filler: ESPN's daily rumour column, a feature about
-// where Basque coaches come from, a player being gracious about an award he
-// lost. Archit's verdict: generic.
+// The old version was an ALLOW-LIST of event words — sack, injure, sign, ban.
+// Anything it did not recognise was thrown away as filler. That failed in the
+// worst possible way: the bigger and stranger the story, the less likely its
+// vocabulary was on the list. Manchester City were found guilty of 114
+// charges, faced expulsion, and the group was never told, across four
+// consecutive briefs, because "guilty", "verdict", "breaches", "expulsion"
+// and "stripped" were not words anyone had thought to add.
 //
-// The ones that worked were things that HAPPENED, with a name attached:
-// Kompany collapsing in training, Fleetwood Town knocking Arsenal out of the
-// League Cup. So this ranks events, not vocabulary, and throws out the three
-// shapes of filler that a daily feed is mostly made of.
+// So nothing is discarded for its KIND any more. Everything about one of the
+// sixteen is ranked, and the ranking is: how big is this story, and is it
+// about the four things Archit actually wants — injuries, transfers, players
+// and managers. A rumour column or a listicle is not banned, it simply sits
+// at the bottom and only appears when there is nothing better.
+//
+// The flood guard is elsewhere and always was: selectDigest takes at most ONE
+// item per club, so thirteen Man City articles in one feed cannot take the
+// brief. The filter never needed to do that job.
 // ———————————————————————————————————————————————————————————————————————
 
 /** ESPN's recurring columns. Same headline every day, different names in it. */
 const RECURRING_COLUMN = /^(transfer rumou?rs?|transfer talk|rumou?r roundup|live updates?|ask |the briefing|what we learned)\b/i;
 
-/** Somebody talking about football, rather than football happening. */
-const JUST_TALK = /\b(says?|said|insists?|admits?|reveals?|claims?|excited|delighted|hits out|backs?|praises?|defends?|slams?|urges?|warns?|hopes?|confident|open to|interview)\b/i;
-
 /** Analysis and listicles. "Why X lost", "How a tiny club…", "ranked", "best XI". */
 const FEATURE = /^(why|how|what|who|where|inside|meet|the rise|the fall)\b|\b(ranked|rated|power rankings|best xi|predictions?|preview|talking points|winners and losers|explained|analysis|a look at)\b/i;
 
-/** Something actually happened to a club. These get the slots. */
-const EVENT = new RegExp([
-  // the dugout
-  'sack(ed|s|ing)?', 'fired', 'appoint\\w*', 'resign\\w*', 'steps? down', 'leaves?', 'departs?', 'takes? charge', 'interim',
-  // bodies
-  'collaps\\w*', 'hospital\\w*', 'injur\\w*', 'surgery', 'operation', 'ruled out', 'out for', 'away for',
-  'sidelined', 'will miss', 'out of action', 'stretchered', 'tear', 'fracture', 'rupture',
-  // business done
-  'sign(s|ed|ing)?\\b', 'agree(s|d)?\\b', 'complete(s|d)?\\b', 'seal(s|ed)?\\b', 'medical', 'joins?\\b',
-  'new contract', 'contract until', 'extends?', 'released', 'sold', 'bought', 'takeover', 'new owners?',
-  // competition
-  // "knock Arsenal out" puts the object in the middle, so a literal
-  // "knocked out" misses the exact headline this filter exists for.
-  'knock(s|ed|ing)?\\b', 'out of the \\w+ cup', 'eliminated', 'crash(es|ed)? out', 'dumped out', 'upset',
-  'through to', 'reach(es|ed)? the',
-  'win(s)? the', 'won the', 'champions', 'ballon d.or', 'player of the year',
-  // discipline
-  'ban(ned|s)?\\b', 'suspend\\w*', 'charg(ed|es)\\b', 'fined', 'red card', 'sent off', 'investigat\\w*', 'points deduction',
-].join('|'), 'i');
+/** Somebody talking about football, rather than football happening. */
+const JUST_TALK = /\b(says?|said|insists?|admits?|reveals?|claims?|excited|delighted|hits out|backs?|praises?|defends?|slams?|urges?|warns?|hopes?|confident|open to|interview)\b/i;
 
-/**
- * 0 = something happened, 1 = concrete interest in a named player, 2 = filler.
- * Tier 2 never reaches the brief: three good items beat six forgettable ones.
- */
-export function newsPriority(headline: string): 0 | 1 | 2 {
-  if (RECURRING_COLUMN.test(headline)) return 2;
-  if (FEATURE.test(headline)) return 2;
-  // Talk is checked BEFORE events on purpose. "Yamal excited despite Ballon
-  // d'Or miss" contains an event word and is still just a man being gracious
-  // about an award he lost; that ordering bug put it top of the live brief.
-  if (JUST_TALK.test(headline)) return 2;
-  if (EVENT.test(headline)) return 0;
-  if (/\b(target(ing|s)?|track(ing|s)?|linked|bid for|want(s|ed)?|move for|interest in)\b/i.test(headline)) return 1;
-  return 2;
+// The four things worth knowing about a club you own money on. These are
+// BOOSTS, not gates: a story that matches none of them still runs if it is
+// big enough.
+const INJURY = /\b(injur\w*|ruled out|out for|sidelined|will miss|miss(es|ed)? the|surgery|operation|hamstring|knee|ankle|groin|calf|achilles|concussion|fitness|doubt|setback|tear|torn|fracture|rupture|stretchered|hospital\w*|collaps\w*|returns? to training|back in training|comeback)\b/i;
+const TRANSFER = /\b(transfer|sign(s|ed|ing)?|joins?|move (to|for)|deal|fee|bid|loan|contract|extends?|renew\w*|released?|sold|bought|medical|agree(s|d)?|target(s|ing)?|linked|swoop|exit|departure|leaves?|price tag|release clause|buyout)\b/i;
+const MANAGER = /\b(managers?|head coach(es)?|bosses|boss|sack(ed|s|ing)?|fired|appoint\w*|resign\w*|steps? down|takes? charge|interim|dugout|successor|technical director|sporting director)\b/i;
+// Discipline and governance. "guilty", "verdict" and "breaches" live here
+// precisely because their absence is what hid the Manchester City story.
+const DISCIPLINE = /\b(ban(ned|s)?|suspend\w*|charg(ed|es)|fined|red card|sent off|investigat\w*|points deduction|guilty|verdict|breach\w*|expulsion|expelled|stripped|sanction\w*|appeal)\b/i;
+
+/** Which of Archit's topics this headline is about. Empty is allowed. */
+export function topicsOf(headline: string): string[] {
+  const out: string[] = [];
+  if (INJURY.test(headline)) out.push('injury');
+  if (TRANSFER.test(headline)) out.push('transfer');
+  if (MANAGER.test(headline)) out.push('manager');
+  if (DISCIPLINE.test(headline)) out.push('discipline');
+  return out;
 }
 
-/** Everything the brief will consider. Filler is dropped outright. */
+/**
+ * 0 = one of the four topics, 1 = everything else, 2 = a recurring column or
+ * a listicle AND nothing on topic.
+ *
+ * Nothing is excluded by this any more — worthPrinting no longer consults it.
+ * It survives because prominence() reads it and the tests describe the brief
+ * in its terms.
+ */
+export function newsPriority(headline: string): 0 | 1 | 2 {
+  if (topicsOf(headline).length) return 0;
+  if (RECURRING_COLUMN.test(headline) || FEATURE.test(headline)) return 2;
+  return 1;
+}
+
+/**
+ * Everything the brief will consider.
+ *
+ * ONE exclusion left, and it is not a matter of taste: ESPN tags a youth or
+ * women's story to the SENIOR club id, so without this a Manchester United
+ * under-18 result arrives as news about Vedant's club. That is a mis-tag, not
+ * an editorial call. Every other kind of story is ranked, not refused.
+ */
 export function worthPrinting(headline: string): boolean {
-  return isFirstTeamFootball(headline) && newsPriority(headline) < 2;
+  return isFirstTeamFootball(headline);
 }
 
 interface RawCategory { type?: string; teamId?: number | string; team?: { id?: number | string } }
@@ -271,10 +284,20 @@ export function isMajorElsewhere(headline: string): boolean {
  * Recency only breaks ties — at 23:00 everything in the window is today.
  */
 export function prominence(it: NewsItem): number {
-  return (it.sources - 1) * 6
-    + (it.prominent ? 3 : 0)
-    + Math.min(it.mentions, 6)
-    + (newsPriority(it.headline) === 0 ? 2 : 0);
+  const topics = topicsOf(it.headline);
+  return (it.sources - 1) * 6                 // syndication: the best virality signal there is
+    + (it.prominent ? 5 : 0)                  // ESPN's own front-page call
+    + Math.min(it.mentions, 6)                // breadth of a big story
+    // FLAT, not scaled by how many topics matched. Counting them made
+    // "Man City learned of guilty verdicts before transfer activity" beat
+    // "Man City guilty of all charges", because an incidental second keyword
+    // scored higher than the story everybody was actually reading. Matching
+    // two of Archit's topics does not make a story twice as interesting.
+    + (topics.length ? 6 : 0)                 // injuries, transfers, managers, discipline
+    + (RECURRING_COLUMN.test(it.headline) ? -6 : 0)
+    + (FEATURE.test(it.headline) ? -5 : 0)
+    + (topics.length === 0 && JUST_TALK.test(it.headline) ? -4 : 0)
+    + (OFF_PITCH.test(it.headline) ? -6 : 0); // tabloid, not banned, just last
 }
 
 export interface DigestSelection {
@@ -301,6 +324,63 @@ export interface DigestSelection {
  */
 export function headlineKey(headline: string): string {
   return headline.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// ———————————————————————————————————————————————————————————————————————
+// THE RETREAD GUARD.
+//
+// Found on 31 Oct in the live Serie A feed, which carried both of these:
+//
+//   "Sources: USMNT's Christian Pulisic set to sign new AC Milan contract"
+//   "USMNT star Christian Pulisic signs new AC Milan contract through 2031"
+//
+// Different ids, different headlines, days apart — so neither the id check
+// nor the headline key stops the second one. To ESPN they are two events,
+// agreed and then completed. To four men reading a group chat they are the
+// same story twice, and this is the repeat Archit actually complained about.
+//
+// So: compare what a headline is ABOUT. Strip the small words, stem the rest,
+// and if a new headline shares most of its distinctive words with one already
+// sent, it is a retread.
+// ———————————————————————————————————————————————————————————————————————
+
+const STOP = new Set([
+  'after', 'ahead', 'among', 'another', 'back', 'been', 'before', 'being', 'both', 'could', 'deal',
+  'does', 'down', 'during', 'each', 'first', 'from', 'game', 'have', 'into', 'just', 'last', 'late',
+  'like', 'more', 'most', 'much', 'near', 'need', 'news', 'next', 'over', 'said', 'says', 'season',
+  'should', 'since', 'some', 'soon', 'sources', 'star', 'still', 'than', 'that', 'their', 'them',
+  'then', 'there', 'these', 'they', 'this', 'through', 'time', 'under', 'until', 'well', 'were',
+  'what', 'when', 'where', 'which', 'while', 'will', 'with', 'would', 'year', 'years',
+]);
+
+/** Crude stemmer: signs/signed/signing all become sign. */
+function stem(w: string): string {
+  return w.replace(/(ing|ed|es|s)$/, '');
+}
+
+/** The distinctive words of a headline. */
+export function headlineTokens(headline: string): Set<string> {
+  return new Set(
+    headlineKey(headline)
+      .replace(/[^a-z0-9 ]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 3 && !STOP.has(w))
+      .map(stem),
+  );
+}
+
+/** Has this story already been told, in different words? */
+export function isRetread(headline: string, alreadySent: Iterable<string>, threshold = 0.6): boolean {
+  const a = headlineTokens(headline);
+  if (a.size < 3) return false;              // too short to judge; let it run
+  for (const prev of alreadySent) {
+    const b = headlineTokens(prev);
+    if (b.size < 3) continue;
+    let shared = 0;
+    for (const w of a) if (b.has(w)) shared++;
+    if (shared / Math.min(a.size, b.size) >= threshold) return true;
+  }
+  return false;
 }
 
 /** The stories about one club, newest first. Used by the scouting DM. */
@@ -337,6 +417,9 @@ export function selectDigest(
   const { maxOurs = 4, maxGeneral = 1 } = opts;
   const seen = new Set(opts.seenIds ?? []);
   const seenKeys = new Set(opts.seenKeys ?? []);
+  // Only the recent ones: a story from three months ago sharing words with
+  // today's is a coincidence, not a repeat. seenKeys is newest-first.
+  const recent = [...seenKeys].slice(0, 60);
 
   // Collapse the same story across league feeds, COUNTING how many carried it
   // and KEEPING every id it arrived under. The count measures how big the
@@ -344,7 +427,7 @@ export function selectDigest(
   const byHeadline = new Map<string, { it: NewsItem; ids: string[] }>();
   for (const it of items) {
     const key = headlineKey(it.headline);
-    if (seen.has(it.id) || seenKeys.has(key)) continue;
+    if (seen.has(it.id) || seenKeys.has(key) || isRetread(it.headline, recent)) continue;
     const prev = byHeadline.get(key);
     if (prev) { prev.it.sources += 1; if (!prev.ids.includes(it.id)) prev.ids.push(it.id); continue; }
     byHeadline.set(key, { it: { ...it, sources: 1 }, ids: [it.id] });
@@ -368,7 +451,7 @@ export function selectDigest(
   // and a club or competition the group would actually recognise.
   const general = ranked
     .map((r) => r.it)
-    .filter((it) => !it.clubIds.length && it.description.length > 20 && isMajorElsewhere(it.headline))
+    .filter((it) => clubOfHeadline(it) === null && it.description.length > 20 && isMajorElsewhere(it.headline))
     .slice(0, maxGeneral);
 
   const shown = [...ours, ...general];
