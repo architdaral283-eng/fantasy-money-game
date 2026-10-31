@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orderXI, positionRank, outfieldRows } from '@/lib/images/lineups';
+import { orderXI, positionRank, positionDepth, positionLateral, outfieldRows } from '@/lib/images/lineups';
 import type { LineupSlot } from '@/lib/providers/espn-lineups';
 
 const p = (name: string, pos: string | null, place: number | null = null): LineupSlot => ({ name, pos, place });
@@ -41,6 +41,42 @@ describe('positionRank', () => {
   });
 });
 
+// Read off /api/og/lineup?debug=1 during the live match, 31 Oct 2026.
+const BAYERN_REAL: LineupSlot[] = [
+  p('J. Urbig', 'G', 1), p('K. Min-Jae', 'CD-L', 6), p('D. Upamecano', 'CD-R', 5),
+  p('A. Davies', 'LB', 3), p('K. Laimer', 'RB', 2), p('I. Saibari', 'AM', 10),
+  p('A. Pavlovic', 'LM', 4), p('J. Kimmich', 'RM', 8), p('H. Kane', 'F', 9),
+  p('S. Gnabry', 'AM-L', 11), p('M. Olise', 'AM-R', 7),
+];
+const DORTMUND_REAL: LineupSlot[] = [
+  p('G. Kobel', 'G', 1), p('W. Anton', 'CD', 5), p('N. Schlotterbeck', 'CD-L', 4),
+  p('K. Gadou', 'CD-R', 6), p('F. Nmecha', 'CM-L', 8), p('J. Veerman', 'CM-R', 7),
+  p('D. Svensson', 'LM', 3), p('M. Beier', 'RM', 2), p('S. Guirassy', 'F', 9),
+  p('C. Chukwuemeka', 'CF-L', 11), p('J. Bellingham', 'CF-R', 10),
+];
+
+describe('positionLateral', () => {
+  it('runs a back four from left to right', () => {
+    const order = ['LB', 'CD-L', 'CD-R', 'RB'].map(positionLateral);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+  it('runs an attacking three from left to right', () => {
+    const order = ['AM-L', 'AM', 'AM-R'].map(positionLateral);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+});
+
+describe('positionDepth', () => {
+  it('puts the lone striker ahead of the two behind him', () => {
+    expect(positionDepth('F')).toBeGreaterThan(positionDepth('CF-L'));
+    expect(positionDepth('F')).toBeGreaterThan(positionDepth('AM'));
+  });
+  it('keeps wide midfielders out of the back four', () => {
+    expect(positionDepth('LM')).toBe(2);
+    expect(positionDepth('CD-L')).toBe(1);
+  });
+});
+
 describe('orderXI', () => {
   it('puts the striker in the front row, not the midfield', () => {
     // The 31 Oct bug: ESPN listed Kane sixth, so filling 4-2-3-1 in roster
@@ -66,17 +102,33 @@ describe('orderXI', () => {
     expect(orderXI(noKeeper, '4-2-3-1').keeper).toBe('Neuer');
   });
 
-  it("trusts ESPN's own slot number when every outfielder carries one", () => {
-    const placed = BAYERN.map((s, i) => ({ ...s, place: i === 0 ? 1 : 13 - i }));
-    const { rows } = orderXI(placed, '4-2-3-1');
-    // Reversed by place, so the last-listed man now leads the back row.
-    expect(rows[0][0]).toBe('Gnabry');
+  it('does NOT use formationPlace as a layout index', () => {
+    // ESPN sends formationPlace and it is NOT a left-to-right order. In the
+    // real Bayern eleven below, place 2 and 3 are the full-backs, place 4 is
+    // a central midfielder and places 5 and 6 are the centre-backs. Sorting
+    // by it would put Pavlovic in the back four.
+    const { rows } = orderXI(BAYERN_REAL, '4-2-3-1');
+    expect(rows[0]).not.toContain('A. Pavlovic');
+    expect(rows[0]).toContain('K. Min-Jae');
   });
 
-  it('ignores a partial set of slot numbers rather than half-trusting it', () => {
-    const half = BAYERN.map((s, i) => (i < 4 ? { ...s, place: 20 - i } : s));
-    const { rows } = orderXI(half, '4-2-3-1');
-    expect(rows[0]).toEqual(['Kim', 'Upamecano', 'Davies', 'Laimer']);
+  it('reproduces the real Bayern eleven from 31 Oct exactly', () => {
+    const { keeper, rows } = orderXI(BAYERN_REAL, '4-2-3-1');
+    expect(keeper).toBe('J. Urbig');
+    // Davies at left-back and Kim at centre-back: the reported bug, inverted.
+    expect(rows[0]).toEqual(['A. Davies', 'K. Min-Jae', 'D. Upamecano', 'K. Laimer']);
+    expect(rows[1]).toEqual(['A. Pavlovic', 'J. Kimmich']);
+    expect(rows[2]).toEqual(['S. Gnabry', 'I. Saibari', 'M. Olise']);
+    expect(rows[3]).toEqual(['H. Kane']);
+  });
+
+  it('reproduces the real Dortmund eleven, where CF-L/CF-R sit behind the F', () => {
+    const { keeper, rows } = orderXI(DORTMUND_REAL, '3-4-2-1');
+    expect(keeper).toBe('G. Kobel');
+    expect(rows[0]).toEqual(['N. Schlotterbeck', 'W. Anton', 'K. Gadou']);
+    expect(rows[1]).toEqual(['D. Svensson', 'F. Nmecha', 'J. Veerman', 'M. Beier']);
+    expect(rows[2]).toEqual(['C. Chukwuemeka', 'J. Bellingham']);
+    expect(rows[3]).toEqual(['S. Guirassy']);
   });
 
   it('keeps the eleven whole for any formation', () => {

@@ -53,20 +53,40 @@ export function lineupSize(): { width: number; height: number } {
  * publish, must still draw something rather than crash or drop players.
  */
 /**
- * Where a player belongs on the pitch, from his ESPN position.
+ * How far up the pitch a position is. 0 keeper … 4 centre-forward.
  *
- * 0 keeper · 1 defence · 2 midfield · 3 attack. Anything unrecognised is
- * midfield, which is the least wrong place to guess.
+ * Read off the real feed (Bayern v Dortmund, 31 Oct 2026), which gives
+ * G · LB · CD-L · CD-R · RB · LM · RM · CM-L · CM-R · AM-L · AM · AM-R ·
+ * CF-L · CF-R · F. Note that CF-L and CF-R are the TWO behind the striker in
+ * a 3-4-2-1, while a bare F is the striker himself — so they sit one band
+ * apart, and the suffixed forms must be tested first.
  */
-export function positionRank(pos: string | null): 0 | 1 | 2 | 3 {
+export function positionDepth(pos: string | null): number {
   const p = (pos ?? '').trim().toUpperCase();
   if (!p) return 2;
   if (p === 'G' || p === 'GK') return 0;
-  // 'D' and the back-four abbreviations. 'DM' is a midfielder and must not
-  // match here, which is why these are anchored rather than prefix tests.
-  if (p === 'D' || /^[CLR]?B$/.test(p) || /^[LR]WB$/.test(p) || p === 'SW') return 1;
-  if (p === 'F' || /^(ST|CF|SS|LW|RW|LF|RF)$/.test(p)) return 3;
-  return 2;
+  if (/^(LB|RB|LWB|RWB|CD|CB|SW|D)\b/.test(p) || p === 'D') return 1;
+  if (/^CF-[LR]$/.test(p) || /^AM/.test(p)) return 3;
+  if (/^(F|ST|SS|CF|LW|RW)\b/.test(p) || p === 'F') return 4;
+  return 2; // LM, RM, CM, DM, M and anything unrecognised
+}
+
+/**
+ * Where across the pitch a position sits. −2 is the left touchline, +2 the
+ * right. 'LB' is wide left; 'CD-L' is the left of the two centre-backs.
+ */
+export function positionLateral(pos: string | null): number {
+  const p = (pos ?? '').trim().toUpperCase();
+  if (!p) return 0;
+  const side = /^L/.test(p) ? -2 : /^R/.test(p) ? 2 : 0;
+  const suffix = /-L$/.test(p) ? -1 : /-R$/.test(p) ? 1 : 0;
+  return side + suffix;
+}
+
+/** Kept for the old coarse bands: 0 keeper, 1 defence, 2 midfield, 3 attack. */
+export function positionRank(pos: string | null): 0 | 1 | 2 | 3 {
+  const d = positionDepth(pos);
+  return d === 0 ? 0 : d === 1 ? 1 : d === 2 ? 2 : 3;
 }
 
 /**
@@ -75,31 +95,34 @@ export function positionRank(pos: string | null): 0 | 1 | 2 | 3 {
  * THE BUG THIS FIXES. The card used to take ESPN's roster array at face
  * value — keeper = xi[0], then fill the formation rows in order. ESPN's
  * roster order is not positional, so on 31 Oct Harry Kane was drawn at
- * number 10 and a centre-back was drawn at left-back.
+ * number 10 and Kim Min-Jae at left-back.
  *
- * Two routes, best first:
- *  - every outfielder carries ESPN's own `formationPlace`: trust it entirely,
- *    and the drawing matches ESPN's own graphic exactly;
- *  - otherwise sort by position group, so defenders occupy the back row and
- *    forwards the front one. Order WITHIN a row is then still ESPN's, which
- *    is the best available guess and no worse than before.
+ * WHAT NOT TO USE. ESPN also sends `formationPlace`, and it is tempting.
+ * It is not a layout index: in that same Bayern eleven, place 2 and 3 were
+ * the full-backs, place 4 was a central midfielder and places 5 and 6 were
+ * the centre-backs. Sorting by it would have put a midfielder in the back
+ * four. It is kept only as a stable tie-break.
+ *
+ * WHAT TO USE. The position abbreviation, which carries both depth and side:
+ * LB, CD-L, CD-R, RB across a back four; AM-L, AM, AM-R across a three.
+ * Sorting by (depth, side) and slicing into the formation reproduces both
+ * real lineups exactly.
  */
 export function orderXI(
   slots: LineupSlot[],
   formation: string | null,
 ): { keeper: string; rows: string[][] } {
   const eleven = slots.slice(0, 11);
-  const keeperAt = eleven.findIndex((p) => positionRank(p.pos) === 0);
-  const keeper = eleven[keeperAt >= 0 ? keeperAt : 0];
-  const outfield = eleven.filter((_, i) => i !== (keeperAt >= 0 ? keeperAt : 0));
+  const keeperAt = eleven.findIndex((p) => positionDepth(p.pos) === 0);
+  const gkIndex = keeperAt >= 0 ? keeperAt : 0;
+  const keeper = eleven[gkIndex];
+  const outfield = eleven.filter((_, i) => i !== gkIndex);
 
-  const everyPlace = outfield.length > 0 && outfield.every((p) => typeof p.place === 'number');
-  const ordered = everyPlace
-    ? [...outfield].sort((a, b) => (a.place ?? 0) - (b.place ?? 0))
-    : [...outfield].sort((a, b) => positionRank(a.pos) - positionRank(b.pos)); // stable: ESPN's order kept within a band
+  const ordered = [...outfield].sort((a, b) =>
+    (positionDepth(a.pos) - positionDepth(b.pos))
+    || (positionLateral(a.pos) - positionLateral(b.pos))
+    || ((a.place ?? 0) - (b.place ?? 0)));
 
-  // No outfielders means no rows. Without this the fallback in
-  // outfieldRows() still yields one band and the card draws an empty stripe.
   if (ordered.length === 0) return { keeper: keeper?.name ?? '', rows: [] };
 
   const counts = outfieldRows(formation, ordered.length);
