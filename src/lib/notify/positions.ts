@@ -9,8 +9,20 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { espnStandings, type ClubStanding } from '@/lib/providers/espn-standings';
 import { POSITION_COMPS, sectionFor } from '@/lib/stats/positions';
 import { buildPositions, type PositionBlock } from '@/lib/notify/format';
+import { CLUBS } from '@/lib/domain/constants';
 
-export async function positionsMessage(db: SupabaseClient, label: string): Promise<string | null> {
+const istDate = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short' });
+
+/** Short, locked names. The constitution fixes these sixteen for the season. */
+const SHORT = new Map(CLUBS.map((c) => [c.id, c.short]));
+
+/**
+ * These are LIVE tables, read at send time. They are posted beside the
+ * monthly awards but they are not October's standings, so the header carries
+ * today's date rather than the award month — which is what it said before,
+ * while the footer underneath claimed otherwise.
+ */
+export async function positionsMessage(db: SupabaseClient, now = new Date()): Promise<string | null> {
   const [{ data: clubs }, { data: bal }] = await Promise.all([
     db.from('clubs').select('id,name,owner_id'),
     db.from('player_balances').select('id,name'),
@@ -32,12 +44,12 @@ export async function positionsMessage(db: SupabaseClient, label: string): Promi
       label: lbl,
       lines: sec.rows.map((r) => ({
         rank: r.rank,
-        club: cmap.get(r.clubId)?.name ?? r.clubId,
+        club: SHORT.get(r.clubId) ?? cmap.get(r.clubId)?.name ?? r.clubId,
         owner: pname(cmap.get(r.clubId)?.owner_id ?? ''),
         points: r.points,
       })),
     });
   });
 
-  return buildPositions(blocks, label);
+  return buildPositions(blocks, istDate.format(now));
 }

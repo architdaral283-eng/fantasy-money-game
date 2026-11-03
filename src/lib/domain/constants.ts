@@ -20,6 +20,13 @@ export const PLAYERS: PlayerSeed[] = [
 export interface ClubSeed {
   id: string;
   name: string;
+  /**
+   * The name for a narrow column. Squads are locked by the constitution, so
+   * these sixteen never change and a hand-written list cannot go stale.
+   * Kept to 11 characters: Telegram wraps a <pre> block at about 30 on a
+   * phone, and the positions table has to fit inside that.
+   */
+  short: string;
   league: 'Premier League' | 'La Liga' | 'Bundesliga' | 'Serie A';
   owner: PlayerId;
   pick: 1 | 2 | 3 | 4;
@@ -28,25 +35,25 @@ export interface ClubSeed {
 
 export const CLUBS: ClubSeed[] = [
   // Premier League
-  { id: 'arsenal', name: 'Arsenal', league: 'Premier League', owner: 'archit', pick: 1, inUcl: true },
-  { id: 'man-city', name: 'Manchester City', league: 'Premier League', owner: 'harshal', pick: 2, inUcl: true },
-  { id: 'man-utd', name: 'Manchester United', league: 'Premier League', owner: 'vedant', pick: 3, inUcl: true },
-  { id: 'aston-villa', name: 'Aston Villa', league: 'Premier League', owner: 'anmol', pick: 4, inUcl: true },
+  { id: 'arsenal', name: 'Arsenal', short: 'Arsenal', league: 'Premier League', owner: 'archit', pick: 1, inUcl: true },
+  { id: 'man-city', name: 'Manchester City', short: 'Man City', league: 'Premier League', owner: 'harshal', pick: 2, inUcl: true },
+  { id: 'man-utd', name: 'Manchester United', short: 'Man Utd', league: 'Premier League', owner: 'vedant', pick: 3, inUcl: true },
+  { id: 'aston-villa', name: 'Aston Villa', short: 'Aston Villa', league: 'Premier League', owner: 'anmol', pick: 4, inUcl: true },
   // La Liga
-  { id: 'real-madrid', name: 'Real Madrid', league: 'La Liga', owner: 'vedant', pick: 1, inUcl: true },
-  { id: 'barcelona', name: 'Barcelona', league: 'La Liga', owner: 'anmol', pick: 2, inUcl: true },
-  { id: 'atletico', name: 'Atletico Madrid', league: 'La Liga', owner: 'archit', pick: 3, inUcl: true },
-  { id: 'real-betis', name: 'Real Betis', league: 'La Liga', owner: 'harshal', pick: 4, inUcl: true },
+  { id: 'real-madrid', name: 'Real Madrid', short: 'Real Madrid', league: 'La Liga', owner: 'vedant', pick: 1, inUcl: true },
+  { id: 'barcelona', name: 'Barcelona', short: 'Barcelona', league: 'La Liga', owner: 'anmol', pick: 2, inUcl: true },
+  { id: 'atletico', name: 'Atletico Madrid', short: 'Atletico', league: 'La Liga', owner: 'archit', pick: 3, inUcl: true },
+  { id: 'real-betis', name: 'Real Betis', short: 'Betis', league: 'La Liga', owner: 'harshal', pick: 4, inUcl: true },
   // Bundesliga
-  { id: 'bayern', name: 'Bayern Munich', league: 'Bundesliga', owner: 'harshal', pick: 1, inUcl: true },
-  { id: 'leverkusen', name: 'Bayer Leverkusen', league: 'Bundesliga', owner: 'archit', pick: 2, inUcl: false },
-  { id: 'dortmund', name: 'Borussia Dortmund', league: 'Bundesliga', owner: 'anmol', pick: 3, inUcl: true },
-  { id: 'rb-leipzig', name: 'RB Leipzig', league: 'Bundesliga', owner: 'vedant', pick: 4, inUcl: true },
+  { id: 'bayern', name: 'Bayern Munich', short: 'Bayern', league: 'Bundesliga', owner: 'harshal', pick: 1, inUcl: true },
+  { id: 'leverkusen', name: 'Bayer Leverkusen', short: 'Leverkusen', league: 'Bundesliga', owner: 'archit', pick: 2, inUcl: false },
+  { id: 'dortmund', name: 'Borussia Dortmund', short: 'Dortmund', league: 'Bundesliga', owner: 'anmol', pick: 3, inUcl: true },
+  { id: 'rb-leipzig', name: 'RB Leipzig', short: 'Leipzig', league: 'Bundesliga', owner: 'vedant', pick: 4, inUcl: true },
   // Serie A
-  { id: 'inter', name: 'Inter', league: 'Serie A', owner: 'anmol', pick: 1, inUcl: true },
-  { id: 'napoli', name: 'Napoli', league: 'Serie A', owner: 'vedant', pick: 2, inUcl: true },
-  { id: 'roma', name: 'AS Roma', league: 'Serie A', owner: 'harshal', pick: 3, inUcl: true },
-  { id: 'juventus', name: 'Juventus', league: 'Serie A', owner: 'archit', pick: 4, inUcl: false },
+  { id: 'inter', name: 'Inter', short: 'Inter', league: 'Serie A', owner: 'anmol', pick: 1, inUcl: true },
+  { id: 'napoli', name: 'Napoli', short: 'Napoli', league: 'Serie A', owner: 'vedant', pick: 2, inUcl: true },
+  { id: 'roma', name: 'AS Roma', short: 'Roma', league: 'Serie A', owner: 'harshal', pick: 3, inUcl: true },
+  { id: 'juventus', name: 'Juventus', short: 'Juventus', league: 'Serie A', owner: 'archit', pick: 4, inUcl: false },
 ];
 
 export interface CompetitionSeed {

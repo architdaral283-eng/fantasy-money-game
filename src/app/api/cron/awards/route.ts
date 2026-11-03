@@ -121,7 +121,7 @@ export async function POST(req: Request) {
   // is thirty lines; folded in, it would fail the whole monthly send.
   let positions = false;
   try {
-    const board = await positionsMessage(db, bounds.label);
+    const board = await positionsMessage(db);
     if (board) {
       await sendGroup(db, board, { urgent: true });
       positions = true;

@@ -828,17 +828,23 @@ export interface PositionBlock { label: string; lines: PositionLine[] }
  */
 export function buildPositions(blocks: PositionBlock[], label: string): string | null {
   if (!blocks.length) return null;
+  // 28 characters wide, and that is the whole design. Telegram wraps a <pre>
+  // block at roughly 30 on a phone: the first version was 34 and the points
+  // column fell onto its own line, which made the table unreadable.
+  //
+  //    1  Man City     21  Harshal
+  //   17  Man Utd       7  Vedant
   const body = blocks
     .map((b) => [
       b.label,
       ...b.lines.map((l) =>
-        `${padL(l.rank > 0 ? String(l.rank) : '–', 2)}  ${padR(l.club, 18)} ${padR(l.owner, 8)}${padL(String(l.points), 3)}`),
+        `${padL(l.rank > 0 ? String(l.rank) : '–', 2)}  ${padR(l.club, 12)}${padL(String(l.points), 3)}  ${l.owner}`),
     ].join('\n'))
     .join('\n\n');
 
   return block(
     head('Positions', label),
     pre(esc(body)),
-    'League position and points as they stand this morning.',
+    'Position and points in each league, read live just now.',
   );
 }
