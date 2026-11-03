@@ -35,7 +35,7 @@ export async function openPollFor(
 
   // Option order is the contract: 0 home, 1 draw, 2 away. score.ts reads the
   // stored index and nothing re-derives it, so this must never be reordered.
-  const sent = await sendPoll(gid, `${home} v ${away} — your call?`, [home, 'Draw', away]);
+  const sent = await sendPoll(gid, `${home} v ${away} — your call? Tap again to change.`, [home, 'Draw', away]);
   if (!sent) return false;
 
   // Logged so the ceiling can see it. A poll is a message in the group like

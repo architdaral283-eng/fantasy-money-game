@@ -78,3 +78,23 @@ export function nthTime(n: number): string {
   const words = ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth'];
   return n > 0 && n < words.length ? words[n] : `${n}th`;
 }
+
+/**
+ * What a poll_answer update means for the predictions table.
+ *
+ * A vote is CHANGEABLE until the poll closes at the 30-minute warning, and
+ * always has been: the table's primary key makes a second vote overwrite the
+ * first, and Telegram delivers a retraction as an empty option list rather
+ * than as a deletion. This was buried in an if/else inside the webhook, so
+ * nothing stated it and nothing tested it.
+ *
+ * In the Telegram client the gesture is to tap your own pick again to
+ * retract it, then tap the new one. That is not discoverable, which is why
+ * the poll question now says so.
+ */
+export type VoteAction = { kind: 'retract' } | { kind: 'set'; choice: number };
+
+export function voteAction(optionIds: number[] | null | undefined): VoteAction {
+  const first = optionIds?.[0];
+  return typeof first === 'number' ? { kind: 'set', choice: first } : { kind: 'retract' };
+}

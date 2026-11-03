@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { voteAction } from '@/lib/predictions/score';
 import { supabaseService } from '@/lib/db/supabase';
 import { approveProposal } from '@/lib/ledger/writer';
 import {
@@ -136,12 +137,14 @@ export async function POST(req: Request) {
     const voter = await playerByTg(db, pa.user?.id);
     if (voter) {
       await markInbound(db, voter.id);
-      if (!pa.option_ids?.length) {
-        // Retracted. Telegram sends an empty option list, not a deletion.
+      // A vote can be changed or withdrawn right up to the 30-minute warning.
+      // Telegram sends a retraction as an empty option list, not a deletion.
+      const action = voteAction(pa.option_ids);
+      if (action.kind === 'retract') {
         await db.from('predictions').delete().eq('poll_id', pa.poll_id).eq('player_id', voter.id);
       } else {
         await db.from('predictions').upsert(
-          { poll_id: pa.poll_id, player_id: voter.id, choice: pa.option_ids[0], answered_at: new Date().toISOString() },
+          { poll_id: pa.poll_id, player_id: voter.id, choice: action.choice, answered_at: new Date().toISOString() },
           { onConflict: 'poll_id,player_id' },
         );
       }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { outcomeOf, choiceToOutcome, scorePoll, leaderboard, missesSince, nthTime, HOME, DRAW, AWAY } from '@/lib/predictions/score';
+import { outcomeOf, choiceToOutcome, scorePoll, leaderboard, missesSince, nthTime, HOME, DRAW, AWAY, voteAction } from '@/lib/predictions/score';
 import { buildPredictionResult, buildPredictionTable, predictionLine } from '@/lib/notify/format';
 
 const KICKOFF = Date.parse('2026-10-31T20:00:00Z');
@@ -144,5 +144,34 @@ describe('the prediction lines', () => {
     ];
     expect(predictionLine(rows)).toBe('Predictions: Archit leads on 8, Vedant 5.');
     expect(predictionLine([{ name: 'Archit', played: 0, hits: 0, points: 0, pct: 0 }])).toBeNull();
+  });
+});
+
+// ———————————————————————————————————————————————————————————————————————
+// A prediction is changeable until the poll closes at the 30-minute warning.
+// Archit reported it as locked; the backend always allowed it, but nothing
+// said so and nothing tested it. Telegram's own answer: "you can retract
+// your vote by tapping it and then re-vote to update the list."
+// ———————————————————————————————————————————————————————————————————————
+describe('voteAction', () => {
+  it('reads a vote as the chosen option', () => {
+    expect(voteAction([0])).toEqual({ kind: 'set', choice: 0 });
+    expect(voteAction([2])).toEqual({ kind: 'set', choice: 2 });
+  });
+
+  it('reads an empty option list as a retraction, which is how Telegram sends one', () => {
+    expect(voteAction([])).toEqual({ kind: 'retract' });
+    expect(voteAction(undefined)).toEqual({ kind: 'retract' });
+    expect(voteAction(null)).toEqual({ kind: 'retract' });
+  });
+
+  it('keeps choice 0 a real choice, not a falsy one', () => {
+    // 'home' is option 0. A truthiness check here would read the home pick
+    // as a retraction and silently delete it.
+    expect(voteAction([0]).kind).toBe('set');
+  });
+
+  it('takes the first option, since the poll is single-answer', () => {
+    expect(voteAction([1, 2])).toEqual({ kind: 'set', choice: 1 });
   });
 });
