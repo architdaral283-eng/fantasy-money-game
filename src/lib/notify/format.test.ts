@@ -111,7 +111,8 @@ describe('lists', () => {
   it('help hides commissioner commands from everyone else', () => {
     expect(buildHelp(false)).not.toContain('/pending');
     expect(buildHelp(true)).toContain('/pending');
-    expect(buildRules()).toContain('₹1,000 from the loser');
+    expect(buildRules()).toContain('₹1,000');
+    expect(buildRules()).toContain('The loser pays the winner.');
   });
 });
 

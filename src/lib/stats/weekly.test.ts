@@ -170,7 +170,10 @@ describe('the roundup message', () => {
       landmark: 'Halfway. Everything so far, again, in reverse.',
     });
     expect(t.startsWith('THE WEEK · 1 Nov')).toBe(true);
-    expect(t).toContain('Archit — The Landlord');
+    // Name, money and form on one line; the title on the next, because the
+    // two together ran to 41 characters and wrapped on a phone.
+    expect(t).toContain('Archit');
+    expect(t).toContain('The Landlord');
     expect(t).toContain('+₹3,000');
     expect(t).toContain('Moment of the week');
     expect(t).toContain('Hottest rivalry');

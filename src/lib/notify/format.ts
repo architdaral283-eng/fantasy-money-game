@@ -18,6 +18,24 @@
 // Pure functions only. Tested in format.test.ts.
 
 import { nthTime } from '@/lib/predictions/score';
+import { CLUBS } from '@/lib/domain/constants';
+
+const SHORT_BY_NAME = new Map(CLUBS.map((c) => [c.name, c.short]));
+
+/** 'Manchester United' -> 'Man Utd'. Unknown names pass through unchanged. */
+export function clubShort(name: string): string {
+  return SHORT_BY_NAME.get(name) ?? name;
+}
+
+// Longest first, so 'Manchester United' is not half-matched by a shorter name.
+const SHORTENABLE = [...SHORT_BY_NAME.entries()].sort((a, b) => b[0].length - a[0].length);
+
+/** The same shortening, inside a sentence: a result description, say. */
+export function shortenClubs(text: string): string {
+  let out = text;
+  for (const [full, short] of SHORTENABLE) out = out.split(full).join(short);
+  return out;
+}
 
 export function esc(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -83,6 +101,26 @@ export function padL(s: string, n: number): string { return s.length >= n ? s : 
 export function cols(rows: [string, string][], gap = 3): string {
   const w = rows.reduce((m, r) => Math.max(m, r[0].length), 0);
   return rows.map(([a, b]) => `${padR(a, w)}${' '.repeat(gap)}${b}`.trimEnd()).join('\n');
+}
+
+/**
+ * How wide a <pre> block may be.
+ *
+ * Telegram wraps a preformatted block at roughly 30 characters on a phone,
+ * and a wrapped COLUMN TABLE is unreadable: the monthly positions table went
+ * out at 34 and every points value landed on its own line. Every aligned
+ * table in this file is built to fit inside this, and format-width.test.ts
+ * asserts it with worst-case data.
+ *
+ * Prose inside <pre> — a news headline, a result description — is exempt.
+ * It cannot fit in 30 characters and wrapping it is untidy, not meaningless.
+ */
+export const PRE_WIDTH = 30;
+
+/** Pad to n, or truncate with an ellipsis, so one long value cannot shove a
+ *  column out of line the way an 18-character badge name used to. */
+export function fit(s: string, n: number): string {
+  return s.length <= n ? padR(s, n) : `${s.slice(0, n - 1)}\u2026`;
 }
 
 /** The one stake line every fixture message shares. */
@@ -197,8 +235,8 @@ export function buildFixtureList(rows: ListFixture[], title = 'Next up'): string
   const body = days.map(({ day, items }) => [
     day,
     ...items.map((f) => [
-      ` ${padR(f.timeIST || '—', 5)}  ${f.home} v ${f.away}`,
-      `        ${f.ownerA} v ${f.ownerB} · ${compShort(f.compId, f.compName)}`,
+      ` ${padR(f.timeIST || '—', 5)} ${clubShort(f.home)} v ${clubShort(f.away)}`,
+      `      ${f.ownerA} v ${f.ownerB} · ${compShort(f.compId, f.compName)}`,
     ].join('\n')),
   ].join('\n')).join('\n\n');
 
@@ -268,7 +306,11 @@ export interface WeeklyInput {
  * separate posts would read as noise — a Sunday roundup reads as an event.
  */
 export function buildWeeklyText(w: WeeklyInput): string {
-  const tableRows = w.table.map((r) => [`${r.name} — ${r.title}`, `${signed(r.net)}  ${r.form}`] as [string, string]);
+  // Name, money and form on one line; the title underneath. Together on one
+  // line they came to 41 characters and wrapped.
+  const tableBody = w.table
+    .map((r) => `${padR(r.name, 8)}${padL(signed(r.net), 9)}  ${r.form}\n  ${r.title}`)
+    .join('\n');
 
   const parts: string[] = [];
   if (w.moment) {
@@ -292,7 +334,7 @@ export function buildWeeklyText(w: WeeklyInput): string {
 
   return block(
     head('The week', w.weekLabel),
-    pre(esc(cols(tableRows))),
+    pre(esc(tableBody)),
     parts.join('\n\n'),
     w.landmark ? esc(w.landmark) : null,
   );
@@ -310,7 +352,7 @@ export function buildLedgerList(rows: LedgerLine[], title: string, sub?: string 
   const amtW = rows.reduce((m, r) => Math.max(m, money(r.amount).length), 0);
   const body = rows.map((r, i) => {
     const line = `${padR(left[i], w)}  ${padL(money(r.amount), amtW)}`;
-    return r.description ? `${line}\n  ${r.description}` : line;
+    return r.description ? `${line}\n  ${shortenClubs(r.description)}` : line;
   }).join('\n');
   const total = rows.reduce((s, r) => s + r.amount, 0);
   return block(head(title, sub), pre(esc(body)), `${money(total)} changed hands.`);
@@ -320,9 +362,19 @@ export function buildLedgerList(rows: LedgerLine[], title: string, sub?: string 
 
 export interface TrophyRow { name: string; status: string; eachOtherPays: number }
 
+/** 'Decided' is seven characters and ate the gap before the money column. */
+function trophyStatus(status: string): string {
+  return /^decided$/i.test(status) ? 'Done' : fit(status, 5).trimEnd();
+}
+
 export function buildTrophies(rows: TrophyRow[], poolInr = 24000): string {
   if (!rows.length) return block(head('Trophies'), 'No races open.');
-  const body = cols(rows.map((r) => [r.name, `${padR(r.status, 9)}${r.eachOtherPays ? `${money(r.eachOtherPays)} each` : 'no trophy'}`]));
+  // 16 + 1 + 7 + 6 = 30. No trophy pays more than ₹2,000, so six is enough
+  // for the money and 'Champions League' fits whole. 'UEFA ' is dropped because it costs five characters
+  // and tells nobody anything.
+  const body = rows.map((r) =>
+    `${fit(r.name.replace(/^UEFA /, ''), 16)} ${padR(trophyStatus(r.status), 5)}${padL(r.eachOtherPays ? money(r.eachOtherPays) : '\u2014', 6)}`.trimEnd(),
+  ).join('\n');
   return block(
     head('Trophies', `${money(poolInr)} pool`),
     pre(esc(body)),
@@ -363,24 +415,24 @@ export const COMMAND_SECTIONS: [string, [string, string][]][] = [
       ['/me', 'your record'],
       ['/settle', 'who pays whom'],
       ['/ledger', 'recent payments'],
-      ['/stakes', 'money in play this week'],
-      ['/exposure', 'your ceiling and floor'],
-      ['/swing', 'biggest swing left'],
+      ['/stakes', 'money this week'],
+      ['/exposure', 'your range'],
+      ['/swing', 'biggest swing'],
     ]],
     ['Football', [
       ['/next', 'what counts next'],
       ['/last', 'recent results'],
       ['/trophies', 'live races'],
-      ['/club', 'one club, whole season'],
+      ['/club', "a club's season"],
       ['/streak', 'everyone’s form'],
-      ['/clubform', 'your four clubs, added up'],
+      ['/clubform', 'your four, summed'],
     ]],
     ['Needle', [
-      ['/taunt', 'roast the latest loser'],
-      ['/h2h', 'two of you, head to head'],
-      ['/nemesis', 'who you keep paying'],
-      ['/rewind', 'the last seven days'],
-      ['/predictions', 'the prediction league'],
+      ['/taunt', 'roast the loser'],
+      ['/h2h', 'head to head'],
+      ['/nemesis', 'who you pay most'],
+      ['/rewind', 'the last week'],
+      ['/predictions', 'the tap league'],
       ['/awards', 'season honours'],
     ]],
     ['Admin', [
@@ -393,9 +445,9 @@ export const COMMISSIONER_COMMANDS: [string, string][] = [
   ['/pending', 'approval queue'],
   ['/health', 'provider + cron'],
   ['/pin', 'refresh the panel'],
-  ['/correct', 'fix a wrong result'],
-  ['/quiet', 'force quiet on/off'],
-  ['/setup', 're-register webhook + menu'],
+  ['/correct', 'fix a wrong one'],
+  ['/quiet', 'toggle quiet'],
+  ['/setup', 'webhook + menu'],
 ];
 
 /** Flat list for setMyCommands: no leading slash, players only. */
@@ -409,21 +461,24 @@ export function playerCommands(): { command: string; description: string }[] {
 export function buildHelp(commissioner: boolean): string {
   const sections: [string, [string, string][]][] = [...COMMAND_SECTIONS];
   if (commissioner) sections.push(['Commissioner', COMMISSIONER_COMMANDS]);
-  const body = sections.map(([t, rows]) => `${t}\n${cols(rows).split('\n').map((l) => ` ${l}`).join('\n')}`).join('\n\n');
+  // 1 + 12 + 17 = 30. It used cols() with a three-space gap and ran to 40.
+  const body = sections
+    .map(([t, rows]) => `${t}\n${rows.map(([c, d]) => ` ${padR(c, 12)}${d}`).join('\n')}`)
+    .join('\n\n');
   return block(head('Commands'), pre(esc(body)));
 }
 
 export function buildRules(): string {
-  const body = cols([
-    ['Win by 1–3', `${money(500)} from the loser`],
-    ['Win by 4+', `${money(1000)} from the loser`],
-    ['Draw', 'nothing moves'],
-    ['Same owner', 'nothing moves'],
-  ]);
+  const body = ([
+    ['Win by 1\u20133', money(500)],
+    ['Win by 4+', money(1000)],
+    ['Draw', 'nothing'],
+    ['Same owner', 'nothing'],
+  ] as [string, string][]).map(([a, b]) => `${padR(a, 12)}${padL(b, 8)}`).join('\n');
   return block(
     head('The rules'),
     pre(esc(body)),
-    'Knockouts: whoever advances wins the tie. Two legs count as one aggregate.\nTrophies: the winner collects from each of the other three.',
+    'The loser pays the winner. Nothing enters or leaves the game.\nKnockouts: whoever advances wins the tie. Two legs count as one aggregate.\nTrophies: the winner collects from each of the other three.',
   );
 }
 
@@ -712,7 +767,10 @@ export function buildBadges(rows: BadgeLine[]): string | null {
     return block(head('Badges', `0 of ${rows.length}`), 'Nothing yet. Not even the bad ones.');
   }
 
-  const body = got.map((r) => `${padR(r.name, 13)} ${r.detail ?? ''}`.trimEnd()).join('\n');
+  // Was padR(name, 13) with the detail beside it, which an 18-character name
+  // such as 'Thrashing Merchant' blew straight through, taking the column
+  // with it. The detail now sits underneath.
+  const body = got.map((r) => (r.detail ? `${r.name}\n  ${r.detail}` : r.name)).join('\n');
   return block(
     head('Badges', `${got.length} of ${rows.length}`),
     pre(esc(body)),
@@ -734,7 +792,7 @@ export interface TrophyLine {
 export function buildRivalryTrophies(rows: TrophyLine[], you?: string | null): string {
   const body = rows.map((r) => {
     const score = r.games ? `${r.aWins}–${r.bWins}` : '—';
-    return `${padR(r.a, 8)} ${padR(score, 5)} ${padR(r.b, 8)}  ${r.holder ?? 'vacant'}`;
+    return `${padR(r.a, 8)}${padR(score, 6)}${padR(r.b, 8)}${r.holder ?? 'vacant'}`;  // 8+6+8+7 = 29
   }).join('\n');
 
   const mine = you ? rows.filter((r) => r.holder === you).length : null;
@@ -761,9 +819,13 @@ export function buildClubForm(
   if (!rows.length || rows.every((r) => r.clubs === 0)) {
     return block(head('Club form'), 'No league tables available right now. Try again later.');
   }
-  const body = rows
-    .map((r) => `${padR(r.name, 9)} ${String(r.points).padStart(3)} pts   ${String(r.gf).padStart(3)} GF  ${String(r.ga).padStart(3)} GA  ${r.diff >= 0 ? '+' : '−'}${String(Math.abs(r.diff)).padStart(2)}`)
-    .join('\n');
+  // 8 + 4 + 5 + 5 + 6 = 28. The old line spelled out 'pts', 'GF' and 'GA' on
+  // every row and came to 40, so it wrapped and lost its columns.
+  const body = [
+    `${padR('', 8)}${padL('PTS', 4)}${padL('GF', 5)}${padL('GA', 5)}${padL('DIFF', 6)}`,
+    ...rows.map((r) =>
+      `${padR(r.name, 8)}${padL(String(r.points), 4)}${padL(String(r.gf), 5)}${padL(String(r.ga), 5)}${padL(`${r.diff >= 0 ? '+' : '\u2212'}${Math.abs(r.diff)}`, 6)}`),
+  ].join('\n');
 
   const notes = [
     best ? `Best club: ${esc(best.club)} — ${esc(best.owner)}, ${best.diff >= 0 ? '+' : '−'}${Math.abs(best.diff)}.` : null,
